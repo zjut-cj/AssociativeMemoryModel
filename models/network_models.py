@@ -11,6 +11,7 @@ from layers.embedding import EmbeddingLayer
 from layers.encoding import EncodingLayer
 from layers.reading import ReadingLayer, ReadingLayerReLU
 from layers.writing import WritingLayer, WritingLayerReLU
+from layers.memory import MemoryLayer
 from models.neuron_models import NeuronModel
 from models.protonet_models import SpikingProtoNet, ProtoNet
 from policies import policy
@@ -105,7 +106,49 @@ class MemorizingAssociationsReLU(torch.nn.Module):
         torch.nn.init.xavier_uniform_(self.input_layer.weight.data, gain=math.sqrt(2))
 
 
+class MNISTOneShot(torch.nn.Module):
+    def __init__(self, output_size: int, memory_size: int, num_time_steps: int, readout_delay: int,
+                 tau_trace: float, image_embedding_layer: SpikingProtoNet, plasticity_rule: Callable,
+                 dynamics: NeuronModel) -> None:
+        super().__init__()
+        spiking_image_size = image_embedding_layer.input_size
+        embedding_size = image_embedding_layer.output_size
+        self.image_encoding_layer = EncodingLayer(1, spiking_image_size, False, False, num_time_steps, dynamics)
+        self.encoding_layer = EncodingLayer(1, embedding_size, False, False, num_time_steps, dynamics)
+        self.image_embedding_layer = image_embedding_layer
+        self.memory_layer = MemoryLayer(2*embedding_size, memory_size, plasticity_rule, tau_trace,
+                                        readout_delay, dynamics)
+        self.decoder_l1 = DenseLayer(memory_size, 256, dynamics)
+        self.decoder_l2 = DenseLayer(256, output_size, dynamics)
 
+    def forward(self, image: torch.Tensor, query: torch.Tensor) -> Tuple:
+        batch_size, sequence_length, *CHW = image.size()
+
+        images_encoded_sequence = []
+        for t in range(sequence_length):
+            images_spiking, _ = self.image_encoding_layer(torch.flatten(image.select(1, t), -2, -1).unsqueeze(2))
+            images_embedded = self.image_embedding_layer(images_spiking)
+            images_encoded_sequence.append(images_embedded)
+        images_encoded = torch.cat(images_encoded_sequence, dim=1)
+
+        query_spiking, _ = self.image_encoding_layer(torch.flatten(query, -2, -1).unsqueeze(2))
+        query_encoded = self.image_embedding_layer(query_spiking)
+
+        mem, write_key, write_value, _ = self.memory_layer(torch.cat((images_encoded, images_encoded), dim=-1))
+
+        _, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1), recall=True)
+
+        decoder_output_l1, _, _ = self.decoder_l1(read_val)
+        decoder_output_l2, _, _ = self.decoder_l2(decoder_output_l1)
+
+        outputs = torch.sum(decoder_output_l2, dim=1).squeeze() / 15
+
+        encoding_outputs = [images_encoded, query_encoded]
+        writing_outputs = [mem, write_key, write_value]
+        reading_outputs = [read_key, read_val]
+        decoder_output = [decoder_output_l1, decoder_output_l2]
+
+        return outputs, encoding_outputs, writing_outputs, reading_outputs, decoder_output
 
 
 class OmniglotOneShot(torch.nn.Module):

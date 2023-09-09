@@ -3,10 +3,13 @@ import json
 import os
 import random
 import socket
+import sys
 import time
 import warnings
 from datetime import datetime
 from typing import List, Tuple
+
+import numpy as np
 from math import ceil, floor
 
 import torch
@@ -26,13 +29,17 @@ import utils.metrics
 from data.mnist_datasets import MNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import OmniglotOneShot
+from models.network_models import OmniglotOneShot, MNISTOneShot
 from models.neuron_models import IafPscDelta
 from models.protonet_models import SpikingProtoNet
 from utils.distributed_sampler_wrapper import DistributedSamplerWrapper
 from utils.episodic_batch_sampler import EpisodicBatchSampler
 
+torch.autograd.set_detect_anomaly(True)
+
 parser = argparse.ArgumentParser(description='Omniglot one-shot task training')
+parser.add_argument('--sequence_length', default=10, type=int, metavar='N',
+                    help='Number of audio-image pairs per example (default: 3)')
 parser.add_argument('--num_classes', default=5, type=int, metavar='N',
                     help='Number of random classes per sample (default: 5)')
 parser.add_argument('--num_time_steps', default=100, type=int, metavar='N',
@@ -45,6 +52,8 @@ parser.add_argument('--workers', default=0, type=int, metavar='N',
 parser.add_argument('--pin_data_to_memory', default=1, choices=[0, 1], type=int, metavar='PIN_DATA_TO_MEMORY',
                     help='Pin data to memory (default: 1)')
 
+parser.add_argument('--embedding_size', default=64, type=int, metavar='N',
+                    help='Embedding size (default: 64)')
 parser.add_argument('--memory_size', default=100, type=int, metavar='N',
                     help='Size of the memory matrix (default: 100)')
 parser.add_argument('--w_max', default=1.0, type=float, metavar='N',
@@ -94,9 +103,9 @@ parser.add_argument('--target_rate', default=0.0, type=float, metavar='N',
 
 parser.add_argument('--use_pretrained_protonet', default=1, choices=[0, 1], type=int, metavar='USE_PRETRAINED_PROTONET',
                     help='Use Conv-nets that were pretrained somehow (default: 1)')
-parser.add_argument('--protonet_checkpoint_path', default='results/checkpoints/omniglot-one-shot-task-protonet'
-                                                          '-checkpoint.pth.tar', type=str, metavar='PATH',
-                    help='Path to ProtoNet checkpoint (default: none)')
+parser.add_argument('--protonet_checkpoint_path', default='results/checkpoints/cross-modal-associations-task-image'
+                                                          '-protonet-checkpoint.tar',
+                    type=str, metavar='PATH', help='Path to ProtoNet checkpoint (default: none)')
 parser.add_argument('--freeze_protonet', default=0, choices=[0, 1], type=int,
                     help='Freeze pre-trained ProtoNets after conversion (default: 0)')
 parser.add_argument('--learn_if_thresholds', action='store_true',
@@ -135,7 +144,7 @@ parser.add_argument('--multiprocessing_distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
-best_acc = 0
+best_loss = np.inf
 log_dir = ''
 writer = None
 time_stamp = datetime.now().strftime('%b%d_%H-%M-%S')
@@ -183,7 +192,7 @@ def main():
 
 
 def main_worker(gpu, num_gpus_per_node, args):
-    global best_acc
+    global best_loss
     global log_dir
     global writer
     global time_stamp
@@ -191,7 +200,7 @@ def main_worker(gpu, num_gpus_per_node, args):
     global suffix
     args.gpu = gpu
 
-    suffix = f'1-shot-{args.num_classes}-way'
+    suffix = f'num_pairs{args.sequence_length}'
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
@@ -219,10 +228,6 @@ def main_worker(gpu, num_gpus_per_node, args):
     train_set, val_set = torch.utils.data.random_split(train_set,
                                                        [ceil(0.9 * len(train_set)), floor(0.1 * len(train_set))])
 
-    # train_set = OmniglotDataset(mode='train', root=args.dir)
-    # val_set = OmniglotDataset(mode='val', root=args.dir)
-    # test_set = OmniglotDataset(mode='test', root=args.dir)
-
     if args.use_pretrained_protonet:
         # Load checkpoint of pretrained ProtoNet to be converted to ProtoNetSpiking
         if not os.path.isfile(args.protonet_checkpoint_path):
@@ -237,7 +242,6 @@ def main_worker(gpu, num_gpus_per_node, args):
             protonet_checkpoint = utils.checkpoint.load_checkpoint(args.protonet_checkpoint_path,
                                                                    'cuda:{}'.format(args.gpu))
 
-        args.fix_cnn_thresholds = False
         image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=args.thr,
                                                             perfect_reset=args.perfect_reset,
                                                             refractory_time_steps=args.refractory_time_steps,
@@ -246,13 +250,14 @@ def main_worker(gpu, num_gpus_per_node, args):
                                                             dampening_factor=args.dampening_factor),
                                                 weight_dict=protonet_checkpoint['state_dict'],
                                                 input_size=784,
+                                                output_size=args.embedding_size,
                                                 num_time_steps=args.num_time_steps,
                                                 refractory_time_steps=args.refractory_time_steps,
                                                 use_bias=args.fix_cnn_thresholds)
 
         if args.learn_if_thresholds:
             print('This may take time as it will go through the whole training set.')
-            aux_train_loader = torch.utils.data.DataLoader(train_set, batch_sampler=init_sampler(train_set.y, args))
+            aux_train_loader = torch.utils.data.DataLoader(train_set, batch_size=64)
             with torch.no_grad():
                 for i, sample in enumerate(aux_train_loader):
                     _, _, aux_query, _ = sample
@@ -260,7 +265,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                     image_embedding_layer.threshold_balancing(None, aux_query)
                     print(str(i), image_embedding_layer.layer_v_th)
         else:
-            image_embedding_layer.threshold_balancing([0.9151, 4.7120, 3.1376, 2.6661])
+            image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
         if args.freeze_protonet:
             for param in image_embedding_layer.parameters():
@@ -274,6 +279,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                                                             spike_function=SpikeFunction,
                                                             dampening_factor=args.dampening_factor),
                                                 input_size=784,
+                                                output_size=args.embedding_size,
                                                 num_time_steps=args.num_time_steps,
                                                 refractory_time_steps=args.refractory_time_steps,
                                                 use_bias=args.fix_cnn_thresholds)
@@ -281,10 +287,9 @@ def main_worker(gpu, num_gpus_per_node, args):
         image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
 
     # Create model
-    print("=> creating model '{model_name}'".format(model_name=OmniglotOneShot.__name__))
-    model = OmniglotOneShot(
-        num_embeddings=args.num_classes,
-        output_size=args.num_classes,
+    print("=> creating model '{model_name}'".format(model_name=MNISTOneShot.__name__))
+    model = MNISTOneShot(
+        output_size=784,
         memory_size=args.memory_size,
         num_time_steps=args.num_time_steps,
         readout_delay=args.readout_delay,
@@ -341,7 +346,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 # Map model to be loaded to specified single gpu.
                 checkpoint = utils.checkpoint.load_checkpoint(args.resume, 'cuda:{}'.format(args.gpu))
             args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
+            best_acc = checkpoint['best_loss']
             log_dir = checkpoint['log_dir']
             time_stamp = checkpoint['time_stamp']
 
@@ -355,12 +360,10 @@ def main_worker(gpu, num_gpus_per_node, args):
             for key, val in vars(checkpoint['params']).items():
                 if key not in ignore_keys:
                     if vars(args)[key] != val:
-                        raise Exception("=> You tried to restart training of a model that was trained with different "
-                                        "parameters as you requested now. Aborting...")
+                        print("=> You tried to restart training of a model that was trained with different parameters "
+                              "as you requested now. Aborting...")
+                        sys.exit()
 
-            if args.gpu is not None:
-                # best_acc may be from a checkpoint from a different GPU
-                best_acc = best_acc.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
@@ -393,7 +396,7 @@ def main_worker(gpu, num_gpus_per_node, args):
         elif args.logging:
             log_dir = os.path.join('results', 'runs', time_stamp +
                                    '_' + socket.gethostname() +
-                                   f'_version-{version}-{suffix}_omniglot_one-shot_task')
+                                   f'_version-{version}-{suffix}_mnist_one-shot_task')
             writer = SummaryWriter(log_dir=log_dir)
 
             def pretty_json(hp):
@@ -408,22 +411,20 @@ def main_worker(gpu, num_gpus_per_node, args):
         current_lr = adjust_learning_rate(optimizer, epoch, args)
 
         # Train for one epoch
-        train_loss, reg_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, reg_loss, = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # Evaluate on validation set
-        val_loss, val_acc = validate(val_loader, model, criterion, args)
+        val_loss = validate(val_loader, model, criterion, args)
 
         # Remember best acc@1 and save checkpoint
-        is_best = val_acc > best_acc
-        best_acc = max(val_acc, best_acc)
+        is_best = val_loss > best_loss
+        best_acc = min(val_loss, best_loss)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed and
                                                     args.rank % num_gpus_per_node == 0):
             if args.logging:
                 writer.add_scalar('Loss/train', train_loss, epoch)
-                writer.add_scalar('Acc/train', train_acc, epoch)
                 writer.add_scalar('Loss/val', val_loss, epoch)
-                writer.add_scalar('Acc/val', val_acc, epoch)
                 writer.add_scalar('Misc/lr', current_lr, epoch)
                 writer.add_scalar('Misc/reg_loss', reg_loss, epoch)
                 if epoch + 1 == args.epochs:
@@ -432,14 +433,14 @@ def main_worker(gpu, num_gpus_per_node, args):
             utils.checkpoint.save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
-                'best_acc': best_acc,
+                'best_loss': best_loss,
                 'optimizer': optimizer.state_dict(),
                 'log_dir': writer.get_logdir() if args.logging else '',
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
                 'results', 'checkpoints', time_stamp +
-                '_' + socket.gethostname() + f'_version-{version}-{suffix}_omniglot_one-shot_task'))
+                '_' + socket.gethostname() + f'_version-{version}-{suffix}_mnist_one-shot_task'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -447,10 +448,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     data_time = utils.meters.AverageMeter('Data', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
     reg_losses = utils.meters.AverageMeter('RegLoss', ':.4e')
-    top1 = utils.meters.AverageMeter('Acc', ':6.2f')
+    # top1 = utils.meters.AverageMeter('Acc', ':6.2f')
     progress = utils.meters.ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, top1],
+        [batch_time, data_time, losses],
         prefix="Epoch: [{}]".format(epoch))
 
     # Switch to train mode
@@ -461,18 +462,19 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # Measure data loading time
         data_time.update(time.time() - end)
 
+        # facts：十张图像，labels：十张图像的标签，query：将要查询的图像，answer：被查询图像的标签
         facts, labels, query, answer = sample
 
         if args.gpu is not None:
             facts = facts.cuda(args.gpu, non_blocking=True)
-            labels = labels.cuda(args.gpu, non_blocking=True)
             query = query.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             answer = answer.cuda(args.gpu, non_blocking=True)
 
         # Compute output
-        output, encoding_outputs, writing_outputs, reading_outputs = model(facts, labels, query)
-        loss = criterion(output, answer)
+        output, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(facts, query)
+        output = output.view(-1, 1, 28, 28)
+        loss = criterion(output, query)
 
         # Regularization
         def compute_l2_loss(x, target, weight):
@@ -485,11 +487,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         l2_act_reg_loss = 0
         weight_query = 1e-3 * args.num_time_steps
-        weight_facts = 1e-3 * args.num_time_steps * args.num_classes
-        l2_act_reg_loss += compute_l2_loss(encoding_outputs[1], args.target_rate, weight=weight_facts)
-        if not args.freeze_protonet:
-            l2_act_reg_loss += compute_l2_loss(encoding_outputs[0], args.target_rate, weight=weight_facts)
-            l2_act_reg_loss += compute_l2_loss(encoding_outputs[2], args.target_rate, weight=weight_query)
+        weight_facts = 1e-3 * args.sequence_length * args.num_time_steps
+        l2_act_reg_loss += compute_l2_loss(encoding_outputs[0], args.target_rate, weight=weight_facts)
+        l2_act_reg_loss += compute_l2_loss(encoding_outputs[1], args.target_rate, weight=weight_query)
 
         l2_act_reg_loss += compute_l2_loss(writing_outputs[1], args.target_rate, weight=weight_facts)
         l2_act_reg_loss += compute_l2_loss(writing_outputs[2], args.target_rate, weight=weight_facts)
@@ -497,18 +497,18 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         l2_act_reg_loss += compute_l2_loss(reading_outputs[0], args.target_rate, weight=weight_query)
         l2_act_reg_loss += compute_l2_loss(reading_outputs[1], args.target_rate, weight=weight_query)
 
+        l2_act_reg_loss += compute_l2_loss(decoder_outputs[0], args.target_rate, weight=weight_query)
+        l2_act_reg_loss += compute_l2_loss(decoder_outputs[1], args.target_rate, weight=weight_query)
+
         act_reg_loss = args.l2 * l2_act_reg_loss
 
         if epoch > 0:
             # Start regularizing after an initial training period
-            loss += act_reg_loss
+            loss = loss + act_reg_loss
 
-        # Measure accuracy and record loss
-        acc = utils.metrics.accuracy(output, answer, top_k=(1,))
 
-        losses.update(loss.item(), facts.size()[0])
-        reg_losses.update(act_reg_loss, facts.size()[0])
-        top1.update(acc[0], facts.size()[0])
+        losses.update(loss.item(), facts.size(0))
+        reg_losses.update(act_reg_loss, facts.size(0))
 
         # Compute gradient
         optimizer.zero_grad(set_to_none=True)
@@ -528,16 +528,16 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
 
-    return losses.avg, reg_losses.avg, top1.avg
+    return losses.avg, reg_losses.avg
 
 
 def validate(data_loader, model, criterion, args, prefix="Val: "):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
-    top1 = utils.meters.AverageMeter('Acc', ':6.2f')
+    # top1 = utils.meters.AverageMeter('Acc', ':6.2f')
     progress = utils.meters.ProgressMeter(
         len(data_loader),
-        [batch_time, losses, top1],
+        [batch_time, losses],
         prefix=prefix)
 
     # Switch to evaluate mode
@@ -551,19 +551,17 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
 
             if args.gpu is not None:
                 facts = facts.cuda(args.gpu, non_blocking=True)
-                labels = labels.cuda(args.gpu, non_blocking=True)
                 query = query.cuda(args.gpu, non_blocking=True)
             if torch.cuda.is_available():
                 answer = answer.cuda(args.gpu, non_blocking=True)
 
             # Compute output
-            output, *_ = model(facts, labels, query)
-            loss = criterion(output, answer)
+            output, *_ = model(facts, query)
+            output = output.view(-1, 1, 28, 28)
+            loss = criterion(output, query)
 
             # Measure accuracy and record loss
-            acc = utils.metrics.accuracy(output, answer, top_k=(1,))
-            losses.update(loss.item(), facts.size()[0])
-            top1.update(acc[0], facts.size()[0])
+            losses.update(loss.item(), facts.size(0))
 
             # Measure elapsed time
             batch_time.update(time.time() - end)
@@ -572,9 +570,9 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             if i % args.print_freq == 0:
                 progress.display(i)
 
-        print(' * Acc {top1.avg:.3f}'.format(top1=top1))
+        print(' * Loss {losses.avg:.3f}'.format(losses=losses))
 
-    return losses.avg, top1.avg
+    return losses.avg
 
 
 def adjust_learning_rate(optimizer, epoch, args):
