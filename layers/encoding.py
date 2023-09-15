@@ -6,6 +6,7 @@ import torch
 
 from models.neuron_models import NeuronModel
 
+
 # 将输入序列编码为一系列时间步上的脉冲序列
 class EncodingLayer(torch.nn.Module):
 

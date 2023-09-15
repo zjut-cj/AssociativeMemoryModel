@@ -61,6 +61,7 @@ if __name__ == '__main__':
     ])
 
     mnist_dataset = MNISTDataset(root='/usr/common/datasets/MNIST', train=True, classes=10, dataset_size=6000, image_transform=transform)
+    image_sequence, labels, image_query, targets = mnist_dataset[0]
 
     dataloader = DataLoader(mnist_dataset, batch_size=128, shuffle=True)
     for batch in dataloader:
