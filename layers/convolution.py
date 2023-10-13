@@ -35,8 +35,10 @@ class Conv2DLayer(torch.nn.Module):
         output_sequence, max_activation = [], [-float('inf')]
         for t in range(sequence_length):
             output = torch.flatten(self.conv2d(x.select(1, t)), -3, -1)
+            output1_array = output.clone().detach().to('cpu').numpy()
             max_activation.append(torch.max(output))
             output, states = self.dynamics(output, states)
+            output2_array = output.clone().detach().to('cpu').numpy()
             output_sequence.append(output)
 
         output = torch.reshape(torch.stack(output_sequence, dim=1), [batch_size, sequence_length, self.fan_out, h, w])

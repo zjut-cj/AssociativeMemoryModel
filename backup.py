@@ -10,6 +10,7 @@ from datetime import datetime
 from math import ceil, floor
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
@@ -30,6 +31,8 @@ from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
 from models.network_models import MNISTOneShot, BackUp
 from models.neuron_models import IafPscDelta
 from models.protonet_models import SpikingProtoNet
+
+torch.autograd.set_detect_anomaly(True)
 
 parser = argparse.ArgumentParser(description='MNIST One Shot task training')
 parser.add_argument('--sequence_length', default=3, type=int, metavar='N',
@@ -66,7 +69,7 @@ parser.add_argument('--readout_delay', default=1, type=int, metavar='N',
                     help='Synaptic delay of the feedback-connections from value-neurons to key-neurons in the '
                          'reading layer (default: 1)')
 
-parser.add_argument('--thr', default=0.01, type=float, metavar='N',
+parser.add_argument('--thr', default=0.05, type=float, metavar='N',
                     help='Spike threshold (default: 0.05)')
 parser.add_argument('--perfect_reset', action='store_true',
                     help='Set the membrane potential to zero after a spike')
@@ -100,8 +103,8 @@ parser.add_argument('--target_rate', default=0.0, type=float, metavar='N',
 
 parser.add_argument('--use_pretrained_protonet', default=1, choices=[0, 1], type=int, metavar='USE_PRETRAINED_PROTONET',
                     help='Use Conv-nets that were pretrained somehow (default: 1)')
-parser.add_argument('--image_protonet_path', default='results/checkpoints/cross-modal-associations-task-image'
-                                                     '-protonet-checkpoint.tar',
+parser.add_argument('--image_protonet_path', default='results/checkpoints/cross-modal-associations'
+                                                     '-task-image-protonet-checkpoint.tar',
                     type=str, metavar='PATH', help='Path to the MNIST ProtoNet checkpoint (default: none)')
 parser.add_argument('--freeze_protonet', default=0, choices=[0, 1], type=int,
                     help='Freeze pre-trained ProtoNets after conversion (default: 0)')
@@ -216,9 +219,9 @@ def main_worker(gpu, num_gpus_per_node, args):
     ])
 
     train_set = MNISTDataset(root=args.dir, train=True, classes=args.num_classes,
-                             dataset_size=6000, image_transform=image_transform)
+                             dataset_size=3000, image_transform=image_transform)
     test_set = MNISTDataset(root=args.dir, train=False, classes=args.num_classes,
-                            dataset_size=2000, image_transform=image_transform)
+                            dataset_size=1000, image_transform=image_transform)
     # Split to train and validation set. There could be some overlap since we sample at random; use with caution
     train_set, val_set = torch.utils.data.random_split(train_set,
                                                        [ceil(0.9 * len(train_set)), floor(0.1 * len(train_set))])
@@ -257,6 +260,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                         print(str(i), image_embedding_layer.layer_v_th)
         else:
             image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
+            # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
 
         if args.freeze_protonet:
             for param in image_embedding_layer.parameters():
@@ -275,6 +279,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                                                 refractory_time_steps=args.refractory_time_steps,
                                                 use_bias=args.fix_cnn_thresholds)
 
+        # 阈值转换，CNN->SpikingCNN
         image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
 
     # Create model
@@ -392,8 +397,7 @@ def main_worker(gpu, num_gpus_per_node, args):
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
             log_dir = os.path.join('results', 'runs', time_stamp +
-                                   '_' + socket.gethostname() +
-                                   f'_version-{version}-{suffix}_mnist_one_shot_task')
+                                   f'_thr-{args.thr}-{suffix}_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
             def pretty_json(hp):
@@ -416,7 +420,6 @@ def main_worker(gpu, num_gpus_per_node, args):
         # Remember `best_loss` and save checkpoint
         is_best = val_loss < best_loss
         best_loss = min(val_loss, best_loss)
-
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed and
                                                     args.rank % num_gpus_per_node == 0):
             if args.logging:
@@ -437,7 +440,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'params': args
             }, is_best, filename=os.path.join(
                 'results', 'checkpoints',
-                time_stamp + '_' + socket.gethostname() + f'_version-{version}-{suffix}_mnist_one_shot_task'))
+                time_stamp + '_' + f'_thr-{args.thr}-{suffix}_mnist_memory'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -467,7 +470,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             image_query = image_query.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             image_target = image_target.cuda(args.gpu, non_blocking=True)
-
+        image_sequence_array = image_sequence.clone().to('cpu').detach().numpy()
+        image_query_array = image_query.clone().to('cpu').detach().numpy()
         # Compute output
         output, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(image_sequence, image_query)
         output = output.view(-1, 1, 28, 28)
@@ -508,7 +512,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # Compute gradient
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+
+        with torch.autograd.detect_anomaly():
+            loss.backward()
 
         if args.max_grad_norm is not None:
             # Clip L2 norm of gradient to max_grad_norm
@@ -525,6 +531,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             progress.display(i)
 
     return losses.avg, reg_losses.avg
+
 
 def validate(data_loader, model, criterion, args, prefix="Val: "):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')

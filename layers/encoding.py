@@ -35,6 +35,7 @@ class EncodingLayer(torch.nn.Module):
     def forward(self, x: torch.Tensor, states: Optional[List[torch.Tensor]] = None) -> Tuple[torch.Tensor,
                                                                                              List[torch.Tensor]]:
         # 输入数据的形状：[batch_size, sequence_length, input_size, hidden_size]
+        x_array = x.clone().detach().to('cpu').numpy()
         batch_size, sequence_length, _, _ = x.size()
 
         if states is None:
@@ -42,7 +43,7 @@ class EncodingLayer(torch.nn.Module):
         # 输入数据和权重矩阵加权，得到i，形状为(batch_size, sequence_length, hidden_size)
         i = torch.sum(self.encoding * x, dim=2)
 
-        # 对每个输入序列，使用神经元模型计算其每个时间步上的脉冲
+        # 对每个输入序列，使用神经元模型计算其每个图像的像素点在每个时间步上的脉冲，最终输出的脉冲序列是包含每个像素点在100ms内的脉冲序列
         output_sequence = []
         for n in range(sequence_length):
             for t in range(self.num_time_steps):

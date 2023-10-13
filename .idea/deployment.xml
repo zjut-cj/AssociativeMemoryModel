@@ -5,7 +5,21 @@
       <paths name="jww@10.12.41.197:6006 password">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/jww/projects/AssociativeMemoryModel" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/jww/projects/AssociativeMemoryModel" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="jww@10.12.41.197:6006 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/jww/projects/AssociativeMemoryModel" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="server">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

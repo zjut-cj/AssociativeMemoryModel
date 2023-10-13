@@ -174,7 +174,9 @@ class BackUp(torch.nn.Module):
         image_feature_size = image_embedding_layer.output_size
         writing_layer_input_size = image_feature_size + image_feature_size
 
+        # encoding layer输出图像的脉冲序列形状为[1, 100, 784]
         self.image_encoding_layer = EncodingLayer(1, spiking_image_size, False, False, num_time_steps, dynamics)
+        # embedding layer输出图像的嵌入编码的形状为[1, 100, 64]
         self.image_embedding_layer = image_embedding_layer
         self.memory_layer = MemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
                                         tau_trace, readout_delay, dynamics)
@@ -183,6 +185,7 @@ class BackUp(torch.nn.Module):
 
     def forward(self, images: torch.Tensor, query: torch.Tensor) -> Tuple:
         batch_size, sequence_length, *CHW = images.size()
+        images_array = images.clone().detach().to('cpu').numpy()
 
         images_encoded_sequence = []
         for t in range(sequence_length):
@@ -194,17 +197,23 @@ class BackUp(torch.nn.Module):
 
         query_spiking, _ = self.image_encoding_layer(torch.flatten(query, -2, -1).unsqueeze(2))
         query_encoded = self.image_embedding_layer(query_spiking)
+        query_array = query.clone().detach().to('cpu').numpy()
+        query_spiking_array = query_spiking.clone().to('cpu').detach().numpy()
+        query_encoded_array = query_encoded.clone().to('cpu').detach().numpy()
 
         mem, write_key, write_val, _ = self.memory_layer(torch.cat((images_encoded, images_encoded), dim=-1))
 
-        _, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1), recall=True)
+        mem, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
+                                                       mem=mem, recall=True)
 
         write_key_array = write_key.clone().to('cpu').detach().numpy()
         write_value_array = write_val.clone().to('cpu').detach().numpy()
         read_key_array = read_key.clone().to('cpu').detach().numpy()
         read_val_array = read_val.clone().to('cpu').detach().numpy()
+        mem_array = mem.clone().to('cpu').detach().numpy()
 
         decoder_output_l1, _, _ = self.decoder_l1(read_val)
+        decoder_output_l1_shape = decoder_output_l1.shape
         decoder_output_l2, _, _ = self.decoder_l2(decoder_output_l1)
 
         outputs = torch.sum(decoder_output_l2, dim=1).squeeze() / 15

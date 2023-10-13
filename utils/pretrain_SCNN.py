@@ -24,8 +24,6 @@ import utils.checkpoint
 import utils.meters
 import utils.metrics
 from data.cross_modal_associations_dataset import FSDDataset
-from functions.autograd_functions import SpikeFunction
-from models.neuron_models import IafPscDelta
 from models.protonet_models import conv_block
 
 parser = argparse.ArgumentParser(description='MNIST or Audio based digit classification model training')
@@ -135,8 +133,6 @@ def main():
 
 class DigitClassifier(torch.nn.Module):
 
-    # intput_channel: 1, hidden_channel: 64, output_channel: 64, num_classes: 10
-    # 四个卷积块+一个全连接层
     def __init__(self, input_size: int = 1, hidden_size: int = 64, output_size: int = 64, num_classes: int = 10,
                  use_batch_norm: bool = True) -> None:
         super().__init__()
@@ -155,11 +151,8 @@ class DigitClassifier(torch.nn.Module):
 
     def forward(self, x):
         out = self.encoder(x)
-        out1_array = out.clone().detach().to('cpu').numpy()
         out = out.view(out.size(0), -1)
-        # out形状[100, 10]
         out = self.linear(out)
-        out2_array = out.clone().to('cpu').detach().numpy()
         return out
 
 
@@ -384,8 +377,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # Compute output
         outputs = model(inputs)
-        outputs_array = outputs.clone().detach().to('cpu').numpy()
-        targets_array = targets.clone().detach().to('cpu').numpy()
         loss = criterion(outputs, targets)
         acc1, acc5 = utils.metrics.accuracy(torch.nn.Softmax()(outputs), targets, top_k=(1, 5))
 

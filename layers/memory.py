@@ -24,7 +24,7 @@ class MemoryLayer(torch.nn.Module):
         # 表示输入和key层之间的权重以及输入和value层的输入
         self.W = torch.nn.Parameter(torch.Tensor(hidden_size + hidden_size, input_size))
         # value层到key层的反馈权重
-        self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, hidden_size))
+        self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, input_size + hidden_size))
         self.reset_parameters()
 
     def forward(self, x: torch.Tensor, mem: Optional[torch.Tensor] = None, recall=False, states: Optional[Tuple[
@@ -46,7 +46,10 @@ class MemoryLayer(torch.nn.Module):
         if mem is None:
             mem = torch.zeros(batch_size, self.hidden_size, self.hidden_size, dtype=x.dtype, device=x.device)
 
+        mem_array = mem.clone().to('cpu').detach().numpy()
+
         # 编码后输入到key-value层的输入电流
+        W_array = self.W.clone().to('cpu').detach().numpy()
         i = torch.nn.functional.linear(x, self.W)
         i_array = i.clone().to('cpu').detach().numpy()
         # 划分key和value层的输入
@@ -59,33 +62,32 @@ class MemoryLayer(torch.nn.Module):
         val_output_sequence = []
         for t in range(sequence_length):
             if recall:
-                with torch.no_grad():
-                    # key层神经元在t时刻接收到上一个时间步的value层的反馈
-                    # feedback_weights_copy = self.feedback_weights.clone()
-                    # feedback_input = torch.nn.functional.linear(val_buffer.select(1, t % self.feedback_delay),
-                    #                                             self.feedback_weights)
-                    feedback_input = torch.nn.functional.linear(torch.cat([ik.select(1, t),
-                                                                          val_buffer.select(1, t % self.feedback_delay)]
-                                                                          , dim=-1), self.feedback_weights)
-                    # key层神经元在t时刻的脉冲key和当前时刻的神经元状态key_states
-                    key, key_states = self.dynamics(feedback_input, key_states)
-                    # key, key_states = self.dynamics(ik.select(1, t), key_states)
+                # key层神经元在t时刻接收到上一个时间步的value层的反馈
+                # feedback_weights_copy = self.feedback_weights.clone()
+                # feedback_input = 0.2 * torch.nn.functional.linear(val_buffer.select(1, t % self.feedback_delay),
+                #                                                   self.feedback_weights)
+                # feedback_input = torch.nn.functional.linear(torch.cat([x.select(1, t),
+                #                                                       val_buffer.select(1, t % self.feedback_delay)]
+                #                                                       , dim=-1), self.feedback_weights)
+                # key层神经元在t时刻的脉冲key和当前时刻的神经元状态key_states
+                key, key_states = self.dynamics(ik.select(1, t), key_states)
+                # key, key_states = self.dynamics(feedback_input, key_states)
 
-                    # ikv_t = 0.2 * (key.unsqueeze(1) * mem).sum(2)
-                    ikv_t = (key.unsqueeze(1) * mem).sum(2)
+                # ikv_t = 0.2 * (key.unsqueeze(1) * mem).sum(2)
+                ikv_t = (key.unsqueeze(1) * mem).sum(2)
 
-                    # val层神经元在t时刻的脉冲val和当前时刻的神经元状态val_states
-                    # val, val_states = self.dynamics(0.5 * iv.select(1, t) + ikv_t, val_states)
-                    val, val_states = self.dynamics(ikv_t, val_states)
+                # val层神经元在t时刻的脉冲val和当前时刻的神经元状态val_states
+                # val, val_states = self.dynamics(0.5 * iv.select(1, t) + ikv_t, val_states)
+                val, val_states = self.dynamics(ikv_t, val_states)
 
-                    # 更新key层和value层的迹
-                    key_trace = exp_convolve(key, key_trace, self.decay_trace)
-                    val_trace = exp_convolve(val, val_trace, self.decay_trace)
-                    # 更新缓冲区中用于存储过去的 Value 层输出。这个缓冲区在每个时间步都会更新
-                    val_buffer[:, t % self.feedback_delay, :] = val
+                # 更新key层和value层的迹
+                # key_trace = exp_convolve(key, key_trace, self.decay_trace)
+                # val_trace = exp_convolve(val, val_trace, self.decay_trace)
+                # 更新缓冲区中用于存储过去的 Value 层输出。这个缓冲区在每个时间步都会更新
+                val_buffer[:, t % self.feedback_delay, :] = val
 
-                    key_output_sequence.append(key)
-                    val_output_sequence.append(val)
+                key_output_sequence.append(key)
+                val_output_sequence.append(val)
             else:
                 # key层神经元在t时刻接收到上一个时间步的value层的反馈
                 # feedback_weights_copy = self.feedback_weights.clone()

@@ -8,16 +8,73 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.utils.data
+import torch.utils.data.distributed
 import torch.backends.cudnn as cudnn
 import torchvision
 
 import utils.checkpoint
-from data.mnist_datasets import MNISTDataset
+from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import MNISTOneShot
+from models.network_models import MNISTOneShot, BackUp
 from models.neuron_models import IafPscDelta
 from models.protonet_models import SpikingProtoNet
+
+
+# 添加椒盐噪声
+def salt_pepper_noise(image, ratio, noise_range=(0.0, 1.0)):
+    """
+    Add salt and pepper noise to a torch tensor representing an image.
+
+    Args:
+        image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
+        ratio (float): Probability of adding salt and pepper noise to each pixel.
+        noise_range (tuple): Range for the noise values (min, max).
+
+    Returns:
+        torch.Tensor: Image tensor with salt and pepper noise.
+    """
+    output = image.clone()
+
+    # Generate random noise mask
+    noise_mask = torch.rand(image.shape) < ratio
+
+    # Generate random noise values in the specified range
+    noise_values = torch.rand(image.shape) * (noise_range[1] - noise_range[0]) + noise_range[0]
+
+    # Apply salt and pepper noise
+    salt_mask = noise_mask & (torch.rand(image.shape) > 0.5)
+    pepper_mask = noise_mask & ~salt_mask
+
+    # Set salt and pepper pixels to the random noise values
+    output[salt_mask] = noise_values[salt_mask]
+    output[pepper_mask] = noise_values[pepper_mask]
+
+    return output
+
+
+# 掩蔽图像
+def apply_mask(image, mask_ratio):
+    """
+    Apply a mask to a normalized image tensor.
+
+    Args:
+        image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
+        mask_ratio (float): Ratio of the image to be masked, ranging from 0.0 to 1.0.
+
+    Returns:
+        torch.Tensor: Image tensor with the specified mask applied.
+    """
+    output = image.clone()
+
+    # Calculate the height of the masked region
+    mask_height = int(image.shape[-2] * mask_ratio)
+
+    # Apply the mask to the lower part of the image
+    output[:, :, -mask_height:] = 0.0
+
+    return output
 
 
 def main():
@@ -30,8 +87,8 @@ def main():
 
     parser.add_argument('--sequence_length', default=3, type=int, metavar='N',
                         help='Number of image per example (default: 3)')
-    parser.add_argument('--test_classes', default=list(range(10)), nargs='+', type=int, metavar='TEST_CLASSES',
-                        help='Classes used during inference (default: list(range(10))')
+    parser.add_argument('--num_classes', default=5, type=int, metavar='N',
+                        help='Number of random classes per sample (default: 5)')
     parser.add_argument('--dataset_size', default=10000, type=int, metavar='DATASET_SIZE',
                         help='Number of examples in the dataset (default: 10000)')
     parser.add_argument('--num_time_steps', default=100, type=int, metavar='N',
@@ -75,15 +132,22 @@ def main():
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     # Data loading code
     image_transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.test_classes,
-                            dataset_size=args.dataset_size, image_transform=image_transform)
+    test_set = SequentialMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+                                      dataset_size=args.dataset_size, image_transform=image_transform)
+
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
+                                              pin_memory=1, prefetch_factor=2)
+
+    image_path = '/home/jww/projects/AssociativeMemoryModel/results/checkpoints/' \
+                 'cross-modal-associations-task-image-protonet-checkpoint.tar'
+    image_protonet_checkpoint = utils.checkpoint.load_checkpoint(image_path, 'cpu')
 
     # Create ProtoNetSpiking
     image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=args.thr,
@@ -91,16 +155,18 @@ def main():
                                                         refractory_time_steps=args.refractory_time_steps,
                                                         tau_mem=args.tau_mem,
                                                         spike_function=SpikeFunction),
+                                            weight_dict=image_protonet_checkpoint['state_dict'],
                                             input_size=784,
                                             output_size=args.embedding_size,
                                             num_time_steps=args.num_time_steps,
                                             refractory_time_steps=args.refractory_time_steps,
                                             use_bias=args.fix_cnn_thresholds)
 
+    # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
     image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
     # Create the model
-    model = MNISTOneShot(
+    model = BackUp(
         output_size=784,
         memory_size=args.memory_size,
         num_time_steps=args.num_time_steps,
@@ -133,6 +199,7 @@ def main():
                         sys.exit()
 
         new_state_dict = OrderedDict()
+        # print("checkpoint['state_dict']:", checkpoint['state_dict'])
         for k, v in checkpoint['state_dict'].items():
             if k.startswith('module.'):
                 k = k[len('module.'):]  # remove `module.`
@@ -142,11 +209,27 @@ def main():
     # Switch to evaluate mode
     model.eval()
 
+    image_sequence, labels, image_query, targets = None, None, None, None
+    for i, sample in enumerate(test_loader):
+        image_sequence, labels, image_query, targets = sample
+        break
+    labels = labels.clone().to('cpu').detach().numpy()
+    original_query_image = image_query.clone()
+    # image_query = salt_pepper_noise(image_query, 1.0)
+    # image_query = apply_mask(image_query, 0.5)
+
     # Get dataset example and run the model
-    image_sequence, labels, image_query, targets = test_set[0]
+    # image_sequence, labels, image_query, targets = test_set[0]
     image_target = image_query
-    image_sequence = image_sequence.unsqueeze(0)
-    image_query = image_query.unsqueeze(0)
+    # image_sequence = image_sequence.unsqueeze(0)
+    # image_query = image_query.unsqueeze(0)
+
+    image_sequence_array = image_sequence.clone().to('cpu').detach().numpy()
+    image_query_array = image_query.clone().to('cpu').detach().numpy()
+    image_sequence_shape = image_sequence.shape
+    labels_shape = labels.shape
+    image_query_shape = image_query.shape
+    targets_shape = targets.shape
 
     outputs, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(image_sequence, image_query)
 
@@ -206,8 +289,9 @@ def main():
     fig, ax = plt.subplots(nrows=2, ncols=image_sequence.size()[1] + 1, sharex='all')
     for i in range(image_sequence.size()[1]):
         image = image_sequence[0][i].numpy()
-        ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-        ax[0, i].set(title='Digit {}'.format(targets[0][i]))
+        # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+        ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+        ax[0, i].set(title='Digit {}'.format(labels[0][i]))
 
         image = image_sequence[0][i].numpy()
         ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
@@ -215,8 +299,9 @@ def main():
         ax[1, i].set_axis_off()
 
     image = image_query[0].numpy()
-    ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    ax[0, -1].set(title='Query digit {}'.format(targets[2]))
+    # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+    ax[0, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    ax[0, -1].set(title='Query digit {}'.format(targets.item()))
 
     ax[1, -1].imshow(np.transpose(outputs, (1, 2, 0)),
                      aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
@@ -226,7 +311,22 @@ def main():
     ax[1, -1].set_axis_off()
     plt.tight_layout()
 
-    fig, ax = plt.subplots(nrows=3, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # query_image = image_query[0].numpy()
+    # original_query = original_query_image[0].numpy()
+    # fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
+    # ax[0].imshow(np.transpose(original_query, (1, 2, 0)),
+    #                 aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
+    # ax[1].imshow(np.transpose(query_image, (1, 2, 0)),
+    #                 aspect='equal', cmap='gray', vmin=np.min(query_image), vmax=np.max(query_image))
+    # ax[2].imshow(np.transpose(outputs, (1, 2, 0)),
+    #                 aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    # ax[0].set_axis_off()
+    # ax[1].set_axis_off()
+    # ax[2].set_axis_off()
+    # fig.subplots_adjust(hspace=0)
+    # plt.tight_layout()
+
+    fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
     ax[0, 0].pcolormesh(images_encoded[0].T, cmap='binary')
     ax[0, 0].set_ylabel('images')
     ax[0, 1].barh(range(args.embedding_size), mean_rate_image_encoding[0])
@@ -239,14 +339,20 @@ def main():
     ax[1, 1].set_yticks([])
     plt.tight_layout()
 
+    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # ax.set_ylabel('Neuron Index')
+    # ax.set_xlabel('Time Step')
+    # ax.pcolormesh(query_encoded[0].T, cmap='binary')
+    # plt.tight_layout()
+
     fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
     ax[0, 0].pcolormesh(write_key[0].T, cmap='binary')
-    ax[0, 0].set_ylabel('write keys')
+    ax[0, 0].set_ylabel('Memory Perception')
     ax[0, 1].barh(range(args.memory_size), mean_rate_write_key[0])
     ax[0, 1].set_ylim([0, args.memory_size])
     ax[0, 1].set_yticks([])
     ax[1, 0].pcolormesh(write_val[0].T, cmap='binary')
-    ax[1, 0].set_ylabel('write values')
+    ax[1, 0].set_ylabel('Memory Response')
     ax[1, 1].barh(range(args.memory_size), mean_rate_write_val[0])
     ax[1, 1].set_ylim([0, args.memory_size])
     ax[1, 1].set_yticks([])
@@ -258,12 +364,12 @@ def main():
 
     fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
     ax[0, 0].pcolormesh(read_key[0].T, cmap='binary')
-    ax[0, 0].set_ylabel('read keys')
+    ax[0, 0].set_ylabel('Recall Perception')
     ax[0, 1].barh(range(args.memory_size), mean_rate_read_key[0])
     ax[0, 1].set_ylim([0, args.memory_size])
     ax[0, 1].set_yticks([])
     ax[1, 0].pcolormesh(read_val[0].T, cmap='binary')
-    ax[1, 0].set_ylabel('read values')
+    ax[1, 0].set_ylabel('Recall Response')
     ax[1, 1].barh(range(args.memory_size), mean_rate_read_val[0])
     ax[1, 1].set_ylim([0, args.memory_size])
     ax[1, 1].set_yticks([])

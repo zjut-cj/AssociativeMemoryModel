@@ -9,9 +9,10 @@ from torch.nn import Parameter
 from layers.convolution import *
 from layers.dense import DenseLayer
 from layers.encoding import EncodingLayer
-from models.neuron_models import NeuronModel
+from models.neuron_models import NeuronModel, IafPscDelta
 
 
+# 脉冲卷积块：[卷积层，最大池化层]，使用IF神经元
 def spiking_conv_block(in_channels: int, out_channels: int, use_bias: bool) -> torch.nn.Module:
     return torch.nn.Sequential(
         Conv2DLayer(in_channels,
@@ -20,15 +21,16 @@ def spiking_conv_block(in_channels: int, out_channels: int, use_bias: bool) -> t
                     padding=1,
                     stride=1,
                     use_bias=use_bias,
-                    dynamics=NonLeakyIafPscDelta(thr=0.,
+                    dynamics=NonLeakyIafPscDelta(thr=0.05,
                                                  perfect_reset=False,
-                                                 refractory_time_steps=0,
+                                                 refractory_time_steps=3,
                                                  spike_function=SpikeFunction,
                                                  dampening_factor=1.)),
         MaxPool2DLayer(k_size=2, stride=2, padding=0)
     )
 
 
+# 卷积块：[卷积层，BN层，激活函数，最大池化层]
 def conv_block(in_channels: int, out_channels: int, use_batch_norm: bool = True) -> torch.nn.Module:
     if use_batch_norm:
         return torch.nn.Sequential(
@@ -45,6 +47,7 @@ def conv_block(in_channels: int, out_channels: int, use_batch_norm: bool = True)
         )
 
 
+# SpikingCNN编码层
 class SpikingProtoNet(torch.nn.Module):
 
     def __init__(self, dynamics: NeuronModel, weight_dict: dict = None, num_time_steps: int = 100,
@@ -80,9 +83,13 @@ class SpikingProtoNet(torch.nn.Module):
         h = 30 if self.input_size == 600 else 28
         w = 20 if self.input_size == 600 else 28
         x = torch.reshape(x, [batch_size, sequence_length, self.input_depth, h, w])
+        x_array = x.clone().detach().to('cpu').numpy()
         x = self.encoder(x)
+        x1 = x.clone()
+        x1 = x1.view(batch_size, sequence_length, -1)
         return torch.reshape(x, [batch_size, sequence_length, self.output_size])
 
+    # 阈值平衡算法
     def threshold_balancing(self, assign_v_th: List = None, aux_train_image: torch.Tensor = None) -> None:
         if assign_v_th is not None:
             self.layer_v_th = assign_v_th
@@ -113,6 +120,7 @@ class SpikingProtoNet(torch.nn.Module):
                     self.encoder[i][0].dynamics.refractory_time_steps = self.refractory_time_steps
 
 
+# CNN编码层：四个卷积块
 class ProtoNet(torch.nn.Module):
 
     def __init__(self, input_size: int = 1, hidden_size: int = 64, output_size: int = 64,
