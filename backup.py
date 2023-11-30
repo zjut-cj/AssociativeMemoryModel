@@ -28,9 +28,12 @@ import utils.metrics
 from data.mnist_datasets import MNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import MNISTOneShot, BackUp
+from models.network_models import BackUp, AttentionMemoryModel
 from models.neuron_models import IafPscDelta
-from models.protonet_models import SpikingProtoNet
+from utils.utils import compute_average_ssim
+# from models.protonet_models import SpikingProtoNet
+from models.spiking_model import SpikingProtoNet
+# from models.spiking_model_4conv import SpikingProtoNet
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -103,8 +106,8 @@ parser.add_argument('--target_rate', default=0.0, type=float, metavar='N',
 
 parser.add_argument('--use_pretrained_protonet', default=1, choices=[0, 1], type=int, metavar='USE_PRETRAINED_PROTONET',
                     help='Use Conv-nets that were pretrained somehow (default: 1)')
-parser.add_argument('--image_protonet_path', default='results/checkpoints/cross-modal-associations'
-                                                     '-task-image-protonet-checkpoint.tar',
+parser.add_argument('--image_protonet_path', default='results/protonet_checkpoints/Oct26_20-06-51_bicserver'
+                                                     '-MNIST_classification_task_best.pth.tar',
                     type=str, metavar='PATH', help='Path to the MNIST ProtoNet checkpoint (default: none)')
 parser.add_argument('--freeze_protonet', default=0, choices=[0, 1], type=int,
                     help='Freeze pre-trained ProtoNets after conversion (default: 0)')
@@ -223,8 +226,8 @@ def main_worker(gpu, num_gpus_per_node, args):
     test_set = MNISTDataset(root=args.dir, train=False, classes=args.num_classes,
                             dataset_size=1000, image_transform=image_transform)
     # Split to train and validation set. There could be some overlap since we sample at random; use with caution
-    train_set, val_set = torch.utils.data.random_split(train_set,
-                                                       [ceil(0.9 * len(train_set)), floor(0.1 * len(train_set))])
+    # train_set, val_set = torch.utils.data.random_split(train_set,
+    #                                                    [ceil(0.9 * len(train_set)), floor(0.1 * len(train_set))])
 
     if args.use_pretrained_protonet:
         image_path = args.image_protonet_path
@@ -233,8 +236,9 @@ def main_worker(gpu, num_gpus_per_node, args):
             image_protonet_checkpoint = utils.checkpoint.load_checkpoint(image_path, 'cpu')
         else:
             image_protonet_checkpoint = utils.checkpoint.load_checkpoint(image_path, 'cuda:{}'.format(args.gpu))
+            # print(image_protonet_checkpoint['state_dict'])
 
-        image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=args.thr,
+        image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=0.05,
                                                             perfect_reset=args.perfect_reset,
                                                             refractory_time_steps=args.refractory_time_steps,
                                                             tau_mem=args.tau_mem,
@@ -259,8 +263,9 @@ def main_worker(gpu, num_gpus_per_node, args):
                         image_embedding_layer.threshold_balancing(None, image_seq.select(1, t))
                         print(str(i), image_embedding_layer.layer_v_th)
         else:
-            image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
+            # image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
             # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
+            print(1)
 
         if args.freeze_protonet:
             for param in image_embedding_layer.parameters():
@@ -280,7 +285,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                                                 use_bias=args.fix_cnn_thresholds)
 
         # 阈值转换，CNN->SpikingCNN
-        image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
+        # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
 
     # Create model
     print("=> creating model '{model_name}'".format(model_name=BackUp.__name__))
@@ -374,17 +379,21 @@ def main_worker(gpu, num_gpus_per_node, args):
         train_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        train_set, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=args.pin_data_to_memory,
-        prefetch_factor=args.prefetch_factor, sampler=train_sampler)
+        prefetch_factor=args.prefetch_factor)
 
-    val_loader = torch.utils.data.DataLoader(
-        val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-        pin_memory=args.pin_data_to_memory, prefetch_factor=args.prefetch_factor)
+    # val_loader = torch.utils.data.DataLoader(
+    #     val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
+    #     pin_memory=args.pin_data_to_memory, prefetch_factor=args.prefetch_factor)
 
+    # test_loader = torch.utils.data.DataLoader(
+    #     test_set, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
+    #     pin_memory=args.pin_data_to_memory, prefetch_factor=args.prefetch_factor)
     test_loader = torch.utils.data.DataLoader(
-        test_set, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-        pin_memory=args.pin_data_to_memory, prefetch_factor=args.prefetch_factor)
+        test_set, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=args.pin_data_to_memory,
+        prefetch_factor=args.prefetch_factor)
 
     if args.evaluate:
         validate(test_loader, model, criterion, args, prefix='Test: ')
@@ -396,8 +405,8 @@ def main_worker(gpu, num_gpus_per_node, args):
             # Use the directory that is stored in checkpoint if we resume training
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
-            log_dir = os.path.join('results', 'runs', time_stamp +
-                                   f'_thr-{args.thr}-{suffix}_mnist_memory')
+            log_dir = os.path.join('results', 'attention_mnist', 'logs', time_stamp +
+                                   f'_thr-{args.thr}-{suffix}_attention_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
             def pretty_json(hp):
@@ -412,10 +421,10 @@ def main_worker(gpu, num_gpus_per_node, args):
         current_lr = adjust_learning_rate(optimizer, epoch, args)
 
         # Train for one epoch
-        train_loss, reg_loss = train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, reg_loss, train_ssim = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # Evaluate on validation set
-        val_loss = validate(val_loader, model, criterion, args)
+        val_loss, val_ssim = validate(test_loader, model, criterion, args)
 
         # Remember `best_loss` and save checkpoint
         is_best = val_loss < best_loss
@@ -425,6 +434,8 @@ def main_worker(gpu, num_gpus_per_node, args):
             if args.logging:
                 writer.add_scalar('Loss/train', train_loss, epoch)
                 writer.add_scalar('Loss/val', val_loss, epoch)
+                writer.add_scalar('SSIM/train', train_ssim, epoch)
+                writer.add_scalar('SSIM/val', val_ssim, epoch)
                 writer.add_scalar('Misc/lr', current_lr, epoch)
                 writer.add_scalar('Misc/reg_loss', reg_loss, epoch)
                 if epoch + 1 == args.epochs:
@@ -439,18 +450,19 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
-                'results', 'checkpoints',
-                time_stamp + '_' + f'_thr-{args.thr}-{suffix}_mnist_memory'))
+                'results', 'attention_mnist',
+                time_stamp + '_' + f'_thr-{args.thr}-{suffix}_with_encoding' + f'_times-{args.num_time_steps}'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')
     data_time = utils.meters.AverageMeter('Data', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
+    ssims = utils.meters.AverageMeter('SSIM', ':.4e')
     reg_losses = utils.meters.AverageMeter('RegLoss', ':.4e')
     progress = utils.meters.ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses],
+        [batch_time, data_time, losses, ssims],
         prefix="Epoch: [{}]".format(epoch))
 
     # Switch to train mode
@@ -470,13 +482,19 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             image_query = image_query.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             image_target = image_target.cuda(args.gpu, non_blocking=True)
-        image_sequence_array = image_sequence.clone().to('cpu').detach().numpy()
-        image_query_array = image_query.clone().to('cpu').detach().numpy()
         # Compute output
         output, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(image_sequence, image_query)
         output = output.view(-1, 1, 28, 28)
-        output_array = output.clone().to('cpu').detach().numpy()
-        image_target_array = image_target.clone().to('cpu').detach().numpy()
+
+        # mem = writing_outputs[0].detach().numpy()
+        # synaptic_connections_num = np.count_nonzero(mem)
+        # total_synaptic_connections = mem.size
+        # synaptic_utilization = synaptic_connections_num / total_synaptic_connections
+
+        output_array = output.clone().detach().to('cpu').numpy()
+        image_target_array = image_target.clone().detach().to('cpu').numpy()
+
+        ssim = compute_average_ssim(output, image_target)
         loss = criterion(output, image_target)
 
         # Regularization
@@ -508,13 +526,13 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # Record loss
         losses.update(loss.item(), image_sequence.size(0))
+        ssims.update(ssim.item(), image_sequence.size(0))
         reg_losses.update(act_reg_loss, image_sequence.size(0))
 
         # Compute gradient
         optimizer.zero_grad(set_to_none=True)
 
-        with torch.autograd.detect_anomaly():
-            loss.backward()
+        loss.backward()
 
         if args.max_grad_norm is not None:
             # Clip L2 norm of gradient to max_grad_norm
@@ -530,15 +548,16 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
 
-    return losses.avg, reg_losses.avg
+    return losses.avg, reg_losses.avg, ssims.avg
 
 
 def validate(data_loader, model, criterion, args, prefix="Val: "):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
+    ssims = utils.meters.AverageMeter('SSIM', ':.4e')
     progress = utils.meters.ProgressMeter(
         len(data_loader),
-        [batch_time, losses],
+        [batch_time, losses, ssims],
         prefix=prefix)
 
     # Switch to evaluate mode
@@ -560,10 +579,12 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             # Compute output
             output, *_ = model(image_sequence, image_query)
             output = output.view(-1, 1, 28, 28)
+            ssim = compute_average_ssim(output, image_target)
             loss = criterion(output, image_target)
 
             # Record loss
             losses.update(loss.item(), image_sequence.size(0))
+            ssims.update(ssim.item(), image_sequence.size(0))
 
             # Measure elapsed time
             batch_time.update(time.time() - end)
@@ -572,9 +593,9 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             if i % args.print_freq == 0:
                 progress.display(i)
 
-        print(' * Loss {losses.avg:.3f}'.format(losses=losses))
+        print(' * Loss {losses.avg:.3f}'.format(losses=losses), ' * SSIM {ssims.avg:.3f}'.format(ssims=ssims))
 
-    return losses.avg
+    return losses.avg, ssims.avg
 
 
 def adjust_learning_rate(optimizer, epoch, args):

@@ -21,7 +21,7 @@ def spiking_conv_block(in_channels: int, out_channels: int, use_bias: bool) -> t
                     padding=1,
                     stride=1,
                     use_bias=use_bias,
-                    dynamics=NonLeakyIafPscDelta(thr=0.05,
+                    dynamics=NonLeakyIafPscDelta(thr=0.1,
                                                  perfect_reset=False,
                                                  refractory_time_steps=3,
                                                  spike_function=SpikeFunction,
@@ -77,6 +77,7 @@ class SpikingProtoNet(torch.nn.Module):
                 new_state_dict[k] = v
             for i in range(len(self.encoder)):
                 self.encoder[i][0].conv2d.weight = Parameter(new_state_dict['encoder.' + str(i) + '.0.weight'])
+                self.encoder[i][0].conv2d.weight.required_grad = False
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, sequence_length, _ = x.size()

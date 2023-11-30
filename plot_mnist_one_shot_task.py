@@ -17,64 +17,66 @@ import utils.checkpoint
 from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import MNISTOneShot, BackUp
+from models.network_models import BackUp, AttentionMemoryModel
 from models.neuron_models import IafPscDelta
-from models.protonet_models import SpikingProtoNet
+from utils.utils import salt_pepper_noise, apply_mask
+# from models.protonet_models import SpikingProtoNet
+from models.spiking_model import SpikingProtoNet
 
 
-# 添加椒盐噪声
-def salt_pepper_noise(image, ratio, noise_range=(0.0, 1.0)):
-    """
-    Add salt and pepper noise to a torch tensor representing an image.
-
-    Args:
-        image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
-        ratio (float): Probability of adding salt and pepper noise to each pixel.
-        noise_range (tuple): Range for the noise values (min, max).
-
-    Returns:
-        torch.Tensor: Image tensor with salt and pepper noise.
-    """
-    output = image.clone()
-
-    # Generate random noise mask
-    noise_mask = torch.rand(image.shape) < ratio
-
-    # Generate random noise values in the specified range
-    noise_values = torch.rand(image.shape) * (noise_range[1] - noise_range[0]) + noise_range[0]
-
-    # Apply salt and pepper noise
-    salt_mask = noise_mask & (torch.rand(image.shape) > 0.5)
-    pepper_mask = noise_mask & ~salt_mask
-
-    # Set salt and pepper pixels to the random noise values
-    output[salt_mask] = noise_values[salt_mask]
-    output[pepper_mask] = noise_values[pepper_mask]
-
-    return output
-
-
-# 掩蔽图像
-def apply_mask(image, mask_ratio):
-    """
-    Apply a mask to a normalized image tensor.
-
-    Args:
-        image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
-        mask_ratio (float): Ratio of the image to be masked, ranging from 0.0 to 1.0.
-
-    Returns:
-        torch.Tensor: Image tensor with the specified mask applied.
-    """
-    output = image.clone()
-
-    # Calculate the height of the masked region
-    mask_height = int(image.shape[-2] * mask_ratio)
-
-    # Apply the mask to the lower part of the image
-    output[:, :, -mask_height:] = 0.0
-
-    return output
+# # 添加椒盐噪声
+# def salt_pepper_noise(image, ratio, noise_range=(0.0, 1.0)):
+#     """
+#     Add salt and pepper noise to a torch tensor representing an image.
+#
+#     Args:
+#         image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
+#         ratio (float): Probability of adding salt and pepper noise to each pixel.
+#         noise_range (tuple): Range for the noise values (min, max).
+#
+#     Returns:
+#         torch.Tensor: Image tensor with salt and pepper noise.
+#     """
+#     output = image.clone()
+#
+#     # Generate random noise mask
+#     noise_mask = torch.rand(image.shape) < ratio
+#
+#     # Generate random noise values in the specified range
+#     noise_values = torch.rand(image.shape) * (noise_range[1] - noise_range[0]) + noise_range[0]
+#
+#     # Apply salt and pepper noise
+#     salt_mask = noise_mask & (torch.rand(image.shape) > 0.5)
+#     pepper_mask = noise_mask & ~salt_mask
+#
+#     # Set salt and pepper pixels to the random noise values
+#     output[salt_mask] = noise_values[salt_mask]
+#     output[pepper_mask] = noise_values[pepper_mask]
+#
+#     return output
+#
+#
+# # 掩蔽图像
+# def apply_mask(image, mask_ratio):
+#     """
+#     Apply a mask to a normalized image tensor.
+#
+#     Args:
+#         image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
+#         mask_ratio (float): Ratio of the image to be masked, ranging from 0.0 to 1.0.
+#
+#     Returns:
+#         torch.Tensor: Image tensor with the specified mask applied.
+#     """
+#     output = image.clone()
+#
+#     # Calculate the height of the masked region
+#     mask_height = int(image.shape[-2] * mask_ratio)
+#
+#     # Apply the mask to the lower part of the image
+#     output[:, :, -mask_height:] = 0.0
+#
+#     return output
 
 
 def main():
@@ -132,22 +134,22 @@ def main():
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
 
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Data loading code
     image_transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = SequentialMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+    test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
                                       dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
                                               pin_memory=1, prefetch_factor=2)
 
-    image_path = '/home/jww/projects/AssociativeMemoryModel/results/checkpoints/' \
-                 'cross-modal-associations-task-image-protonet-checkpoint.tar'
-    image_protonet_checkpoint = utils.checkpoint.load_checkpoint(image_path, 'cpu')
+    # image_path = '/home/jww/projects/AssociativeMemoryModel/results/checkpoints/' \
+    #              'Oct13_15-19-31_bicserver-MNIST_classification_task.pth.tar'
+    # image_protonet_checkpoint = utils.checkpoint.load_checkpoint(image_path, 'cpu')
 
     # Create ProtoNetSpiking
     image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=args.thr,
@@ -155,7 +157,7 @@ def main():
                                                         refractory_time_steps=args.refractory_time_steps,
                                                         tau_mem=args.tau_mem,
                                                         spike_function=SpikeFunction),
-                                            weight_dict=image_protonet_checkpoint['state_dict'],
+                                            # weight_dict=image_protonet_checkpoint['state_dict'],
                                             input_size=784,
                                             output_size=args.embedding_size,
                                             num_time_steps=args.num_time_steps,
@@ -163,7 +165,7 @@ def main():
                                             use_bias=args.fix_cnn_thresholds)
 
     # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
-    image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
+    # image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
     # Create the model
     model = BackUp(
@@ -232,6 +234,9 @@ def main():
     targets_shape = targets.shape
 
     outputs, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(image_sequence, image_query)
+    outputs_copy = outputs.clone()
+    outputs1_array = outputs_copy.detach().to('cpu').numpy()
+    outputs_copy_array = outputs_copy.view(-1, 1, 28, 28).detach().to('cpu').numpy()
 
     # Get the outputs
     images_encoded = encoding_outputs[0].detach().numpy()
@@ -261,12 +266,17 @@ def main():
     z_dec1 = decoder_output_l1[0]
     z_dec2 = decoder_output_l2[0]
 
+    synaptic_connections_num = np.count_nonzero(mem)
+    total_synaptic_connections = mem.size
+    synaptic_utilization = synaptic_connections_num / total_synaptic_connections
+
     print("z_s_enc", z_s_enc.shape)
     print("z_r_enc", z_r_enc.shape)
     print("z_key", z_key.shape)
     print("z_value", z_value.shape)
     print("z_dec1", z_dec1.shape)
     print("z_dec2", z_dec2.shape)
+    print("突触利用率：", synaptic_utilization)
 
     all_neurons = np.concatenate((
         np.pad(z_s_enc, ((0, args.num_time_steps), (0, 0))),
@@ -311,6 +321,52 @@ def main():
     ax[1, -1].set_axis_off()
     plt.tight_layout()
 
+    # fig, ax = plt.subplots(nrows=4, ncols=6, sharex='all')
+    # for i in range(5):
+    #     image = image_sequence[0][i]
+    #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+    #     ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    #     ax[0, i].set(title='Digit {}'.format(labels[0][i]))
+    #
+    #     image = image_sequence[0][i]
+    #     ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
+    #     ax[0, i].set_axis_off()
+    #     ax[1, i].set_axis_off()
+    #
+    #     image_second_row = image_sequence[0][i + 5]
+    #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+    #     ax[2, i].imshow(np.transpose(image_second_row, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    #     ax[2, i].set(title='Digit {}'.format(labels[0][i + 5]))
+    #
+    #     image = image_sequence[0][i + 5].numpy()
+    #     ax[3, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
+    #     ax[2, i].set_axis_off()
+    #     ax[3, i].set_axis_off()
+    #
+    # image = image_query[0]
+    # # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+    # ax[1, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    # ax[1, -1].set(title='Query digit {}'.format(targets.item()))
+    #
+    # ax[2, -1].imshow(np.transpose(outputs, (1, 2, 0)),
+    #                  aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    # ax[2, -1].set(title='Reconstructed image')
+    #
+    # ax[1, -1].set_axis_off()
+    # ax[2, -1].set_axis_off()
+    #
+    # ax[0, -1].set_axis_off()
+    # ax[3, -1].set_axis_off()
+    # plt.tight_layout()
+
+    # query image
+    # query_image = image_query[0].numpy()
+    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # ax.imshow(np.transpose(query_image, (1, 2, 0)),
+    #           aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    # ax.set_axis_off()
+    # plt.tight_layout()
+
     # query_image = image_query[0].numpy()
     # original_query = original_query_image[0].numpy()
     # fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
@@ -339,6 +395,7 @@ def main():
     ax[1, 1].set_yticks([])
     plt.tight_layout()
 
+    # query encoding
     # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
     # ax.set_ylabel('Neuron Index')
     # ax.set_xlabel('Time Step')
@@ -358,8 +415,22 @@ def main():
     ax[1, 1].set_yticks([])
     plt.tight_layout()
 
-    fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
-    ax.matshow(mem[0], cmap='RdBu')
+    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # ax.matshow(mem[0], cmap='RdBu')
+    # plt.tight_layout()
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
+    cax = ax.imshow(mem[0], cmap='viridis')
+    # 设置横坐标和纵坐标的刻度及标签
+    xticks_interval = 20
+    yticks_interval = 20
+    ax.set_xticks(np.arange(0, 100, xticks_interval))
+    ax.set_yticks(np.arange(0, 100, yticks_interval))
+    ax.set_xticklabels(np.arange(0, 100, xticks_interval))
+    ax.set_yticklabels(np.arange(0, 100, yticks_interval))
+    # 添加颜色条
+    fig.colorbar(cax)
+    ax.set_title("Synaptic weights between Perception and Response neurons")
     plt.tight_layout()
 
     fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
