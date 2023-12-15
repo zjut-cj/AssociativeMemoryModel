@@ -36,7 +36,7 @@ def spiking_conv_block(in_channels: int, out_channels: int, use_bias: bool, sent
 # SpikingCNN编码层
 class SpikingTextCNN(torch.nn.Module):
 
-    def __init__(self, dynamics: NeuronModel, num_time_steps: int = 25, sentence_length: int = 50,
+    def __init__(self, dynamics: NeuronModel, num_time_steps: int = 10, sentence_length: int = 50,
                  refractory_time_steps: int = 3, input_depth: int = 1,
                  hidden_size: int = 100, output_size: int = 100, use_bias: bool = False) -> None:
         super().__init__()
@@ -67,11 +67,8 @@ class SpikingTextCNN(torch.nn.Module):
             sentence_encoded.append(word_encoded)
 
         x = torch.cat(sentence_encoded, dim=1)
-        sentence_encoded_array = x.clone().detach().to('cpu').numpy()
         x = self.encoder(x)
         batch_size, time_steps, _, _, _ = x.size()
         x = x.reshape(batch_size, time_steps, -1)
-        x_array = x.clone().detach().to('cpu').numpy()
         x, _, _ = self.linear(x)
-        x_array = x.clone().detach().to('cpu').numpy()
         return x

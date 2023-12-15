@@ -17,7 +17,7 @@ import utils.checkpoint
 from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import MNISTOneShot, BackUp
+from models.network_models import BackUp, InhibitoryMemoryModel
 from models.neuron_models import IafPscDelta
 from utils.utils import salt_pepper_noise, apply_mask
 # from models.protonet_models import SpikingProtoNet
@@ -85,7 +85,7 @@ def main():
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     # Data loading code
     image_transform = torchvision.transforms.Compose([
@@ -119,7 +119,7 @@ def main():
     # image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
     # Create the model
-    model = BackUp(
+    model = InhibitoryMemoryModel(
         output_size=784,
         memory_size=args.memory_size,
         num_time_steps=args.num_time_steps,

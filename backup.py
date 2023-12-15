@@ -28,7 +28,7 @@ import utils.metrics
 from data.mnist_datasets import MNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import BackUp, AttentionMemoryModel
+from models.network_models import BackUp, AttentionMemoryModel, InhibitoryMemoryModel
 from models.neuron_models import IafPscDelta
 from utils.utils import compute_average_ssim
 # from models.protonet_models import SpikingProtoNet
@@ -289,7 +289,7 @@ def main_worker(gpu, num_gpus_per_node, args):
 
     # Create model
     print("=> creating model '{model_name}'".format(model_name=BackUp.__name__))
-    model = BackUp(
+    model = InhibitoryMemoryModel(
         output_size=784,
         memory_size=args.memory_size,
         num_time_steps=args.num_time_steps,
@@ -405,7 +405,7 @@ def main_worker(gpu, num_gpus_per_node, args):
             # Use the directory that is stored in checkpoint if we resume training
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
-            log_dir = os.path.join('results', 'attention_mnist', 'logs', time_stamp +
+            log_dir = os.path.join('results', 'paper_result', '8_images', 'logs', time_stamp +
                                    f'_thr-{args.thr}-{suffix}_attention_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
@@ -450,7 +450,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
-                'results', 'attention_mnist',
+                'results', 'paper_result', '8_images',
                 time_stamp + '_' + f'_thr-{args.thr}-{suffix}_with_encoding' + f'_times-{args.num_time_steps}'))
 
 

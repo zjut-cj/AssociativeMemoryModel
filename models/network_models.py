@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional
 
+from layers.convolution import Conv2DLayer
 from layers.dense import DenseLayer, AttentionDenseLayer
 from layers.embedding import EmbeddingLayer
 from layers.encoding import EncodingLayer
@@ -14,7 +15,8 @@ from layers.attention import AttentionLayer, SpatioAttentionLayer
 from layers.reading import ReadingLayer, ReadingLayerReLU
 from layers.writing import WritingLayer, WritingLayerReLU
 from layers.memory import MemoryLayer, InhibitionMemoryLayer, DualInhibitionMemoryLayer
-from models.neuron_models import NeuronModel
+from models.neuron_models import NeuronModel, IafPscDelta
+from functions.autograd_functions import SpikeFunction
 from models.protonet_models import SpikingProtoNet, ProtoNet
 from policies import policy
 
@@ -31,10 +33,10 @@ class BackUp(torch.nn.Module):
         # self.image_encoding_layer = EncodingLayer(1, spiking_image_size, False, False, num_time_steps, dynamics)
         # embedding layer输出图像的嵌入编码的形状为[1, 100, 64]
         self.image_embedding_layer = image_embedding_layer
-        # self.memory_layer = MemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
-        #                                 tau_trace, readout_delay, dynamics)
-        self.memory_layer = DualInhibitionMemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
-                                                      tau_trace, readout_delay, memory_size, dynamics)
+        self.memory_layer = MemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
+                                        tau_trace, readout_delay, dynamics)
+        # self.memory_layer = InhibitionMemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
+        #                                           tau_trace, readout_delay, memory_size, dynamics)
         self.decoder_l1 = DenseLayer(memory_size, 256, dynamics)
         self.decoder_l2 = DenseLayer(256, output_size, dynamics)
 
@@ -70,6 +72,57 @@ class BackUp(torch.nn.Module):
 
         mem, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
                                                        mem=mem, recall=True)
+
+        decoder_output_l1, _, _ = self.decoder_l1(read_val)
+        decoder_output_l2, _, _ = self.decoder_l2(decoder_output_l1)
+
+        outputs = torch.sum(decoder_output_l2, dim=1).squeeze() / 15
+
+        encoding_outputs = [images_encoded, query_encoded]
+        writing_outputs = [mem, write_key, write_val]
+        reading_outputs = [read_key, read_val]
+        decoder_outputs = [decoder_output_l1, decoder_output_l2]
+
+        return outputs, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs
+
+
+class InhibitoryMemoryModel(torch.nn.Module):
+    def __init__(self, output_size: int, memory_size: int, num_time_steps: int, readout_delay: int, tau_trace: float,
+                 image_embedding_layer: torch.nn.Module, plasticity_rule: Callable, dynamics: NeuronModel) -> None:
+        super().__init__()
+        image_feature_size = image_embedding_layer.output_size
+        writing_layer_input_size = image_feature_size + image_feature_size
+
+        self.image_embedding_layer = image_embedding_layer
+        self.memory_layer = InhibitionMemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
+                                                  tau_trace, readout_delay, memory_size, dynamics)
+        self.decoder_l1 = DenseLayer(memory_size, 256, dynamics)
+        self.decoder_l2 = DenseLayer(256, output_size, dynamics)
+
+    def forward(self, images: torch.Tensor, query: torch.Tensor) -> Tuple:
+        batch_size, sequence_length, *CHW = images.size()
+
+        images_encoded_sequence = []
+        for t in range(sequence_length):
+
+            images_embedded = self.image_embedding_layer(images.select(1, t))
+
+            images_encoded_sequence.append(images_embedded)
+
+        images_encoded = torch.cat(images_encoded_sequence, dim=1)
+
+        query_encoded = self.image_embedding_layer(query)
+
+        # query_array = query.clone().detach().to('cpu').numpy()
+        # query_spiking_array = query_spiking.clone().to('cpu').detach().numpy()
+        # query_encoded_array = query_encoded.clone().to('cpu').detach().numpy()
+
+        mem, excitatory_inhibitory, inhibitory_excitatory, write_key, write_val, _ = \
+            self.memory_layer(torch.cat((images_encoded, images_encoded), dim=-1))
+
+        mem, _, _, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
+                                                             mem=mem, excitatory_inhibitory=excitatory_inhibitory,
+                                                             inhibitory_excitatory=inhibitory_excitatory, recall=True)
 
         decoder_output_l1, _, _ = self.decoder_l1(read_val)
         decoder_output_l2, _, _ = self.decoder_l2(decoder_output_l1)
@@ -333,8 +386,10 @@ class TextImageAssociation(torch.nn.Module):
 
         self.image_embedding_layer = image_embedding_layer
         self.text_embedding_layer = text_embedding_layer
-        self.memory_layer = MemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
-                                        tau_trace, readout_delay, dynamics)
+        # self.memory_layer = MemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
+        #                                 tau_trace, readout_delay, dynamics)
+        self.memory_layer = InhibitionMemoryLayer(writing_layer_input_size, memory_size, plasticity_rule,
+                                                  tau_trace, readout_delay, memory_size, dynamics)
         self.decoder_l1 = DenseLayer(memory_size, 256, dynamics)
         self.decoder_l2 = DenseLayer(256, output_size, dynamics)
 
@@ -360,10 +415,16 @@ class TextImageAssociation(torch.nn.Module):
         # text_encoded_array = text_encoded.clone().detach().to('cpu').numpy()
         # query_encoded_array = query_encoded.clone().detach().to('cpu').numpy()
 
-        mem, write_key, write_val, _ = self.memory_layer(torch.cat((text_encoded, images_encoded), dim=-1))
+        mem, excitatory_inhibitory, inhibitory_excitatory, write_key, write_val, _ = \
+            self.memory_layer(torch.cat((text_encoded, images_encoded), dim=-1))
+        mem, _, _, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
+                                                             mem=mem, excitatory_inhibitory=excitatory_inhibitory,
+                                                             inhibitory_excitatory=inhibitory_excitatory, recall=True)
 
-        mem, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
-                                                       mem=mem, recall=True)
+        # mem, write_key, write_val, _ = self.memory_layer(torch.cat((text_encoded, images_encoded), dim=-1))
+        #
+        # mem, read_key, read_val, _ = self.memory_layer(torch.cat((query_encoded, query_encoded), dim=-1),
+        #                                                mem=mem, recall=True)
 
         decoder_output_l1, _, _ = self.decoder_l1(read_val)
         decoder_output_l2, _, _ = self.decoder_l2(decoder_output_l1)

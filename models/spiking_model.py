@@ -56,18 +56,6 @@ class SpikingProtoNet(torch.nn.Module):
         )
         self.linear = DenseLayer(32*7*7, output_size, self.dynamics)
 
-        if weight_dict:
-            new_state_dict = OrderedDict()
-            for k, v in weight_dict.items():
-                if k.startswith('module.'):
-                    k = k[len('module.'):]  # remove `module.`
-                new_state_dict[k] = v
-            for i in range(len(self.encoder)):
-                self.encoder[i][0].conv2d.weight = Parameter(new_state_dict['encoder.' + str(i) + '.0.conv2d.weight'])
-                # self.encoder[i][0].conv2d.weight.required_gard = False
-            self.linear.W = Parameter(new_state_dict['linear1.W'])
-            # self.linear.W.requires_grad = False
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
         # 将像素值输入神经元中进行编码

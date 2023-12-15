@@ -14,69 +14,14 @@ import torch.backends.cudnn as cudnn
 import torchvision
 
 import utils.checkpoint
-from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset
+from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset, RepeatMNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
-from models.network_models import BackUp, AttentionMemoryModel
+from models.network_models import BackUp, AttentionMemoryModel, InhibitoryMemoryModel
 from models.neuron_models import IafPscDelta
 from utils.utils import salt_pepper_noise, apply_mask
 # from models.protonet_models import SpikingProtoNet
 from models.spiking_model import SpikingProtoNet
-
-
-# # 添加椒盐噪声
-# def salt_pepper_noise(image, ratio, noise_range=(0.0, 1.0)):
-#     """
-#     Add salt and pepper noise to a torch tensor representing an image.
-#
-#     Args:
-#         image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
-#         ratio (float): Probability of adding salt and pepper noise to each pixel.
-#         noise_range (tuple): Range for the noise values (min, max).
-#
-#     Returns:
-#         torch.Tensor: Image tensor with salt and pepper noise.
-#     """
-#     output = image.clone()
-#
-#     # Generate random noise mask
-#     noise_mask = torch.rand(image.shape) < ratio
-#
-#     # Generate random noise values in the specified range
-#     noise_values = torch.rand(image.shape) * (noise_range[1] - noise_range[0]) + noise_range[0]
-#
-#     # Apply salt and pepper noise
-#     salt_mask = noise_mask & (torch.rand(image.shape) > 0.5)
-#     pepper_mask = noise_mask & ~salt_mask
-#
-#     # Set salt and pepper pixels to the random noise values
-#     output[salt_mask] = noise_values[salt_mask]
-#     output[pepper_mask] = noise_values[pepper_mask]
-#
-#     return output
-#
-#
-# # 掩蔽图像
-# def apply_mask(image, mask_ratio):
-#     """
-#     Apply a mask to a normalized image tensor.
-#
-#     Args:
-#         image (torch.Tensor): Input image tensor with pixel values in the range [0, 1].
-#         mask_ratio (float): Ratio of the image to be masked, ranging from 0.0 to 1.0.
-#
-#     Returns:
-#         torch.Tensor: Image tensor with the specified mask applied.
-#     """
-#     output = image.clone()
-#
-#     # Calculate the height of the masked region
-#     mask_height = int(image.shape[-2] * mask_ratio)
-#
-#     # Apply the mask to the lower part of the image
-#     output[:, :, -mask_height:] = 0.0
-#
-#     return output
 
 
 def main():
@@ -134,7 +79,7 @@ def main():
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     # Data loading code
     image_transform = torchvision.transforms.Compose([
@@ -142,7 +87,7 @@ def main():
     ])
 
     test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
-                                      dataset_size=args.dataset_size, image_transform=image_transform)
+                            dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
                                               pin_memory=1, prefetch_factor=2)
@@ -168,7 +113,7 @@ def main():
     # image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
     # Create the model
-    model = BackUp(
+    model = InhibitoryMemoryModel(
         output_size=784,
         memory_size=args.memory_size,
         num_time_steps=args.num_time_steps,
@@ -296,68 +241,68 @@ def main():
     print("all_neurons", (np.sum(all_neurons, axis=0) / (1e-3 * (args.sequence_length + 1) * args.num_time_steps)).mean())
 
     # Make some plots
-    fig, ax = plt.subplots(nrows=2, ncols=image_sequence.size()[1] + 1, sharex='all')
-    for i in range(image_sequence.size()[1]):
-        image = image_sequence[0][i].numpy()
-        # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-        ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-        ax[0, i].set(title='Digit {}'.format(labels[0][i]))
-
-        image = image_sequence[0][i].numpy()
-        ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
-        ax[0, i].set_axis_off()
-        ax[1, i].set_axis_off()
-
-    image = image_query[0].numpy()
-    # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    ax[0, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    ax[0, -1].set(title='Query digit {}'.format(targets.item()))
-
-    ax[1, -1].imshow(np.transpose(outputs, (1, 2, 0)),
-                     aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    ax[1, -1].set(title='Reconstructed image')
-
-    ax[0, -1].set_axis_off()
-    ax[1, -1].set_axis_off()
-    plt.tight_layout()
-
-    # fig, ax = plt.subplots(nrows=4, ncols=6, sharex='all')
-    # for i in range(5):
-    #     image = image_sequence[0][i]
+    # fig, ax = plt.subplots(nrows=2, ncols=image_sequence.size()[1] + 1, sharex='all')
+    # for i in range(image_sequence.size()[1]):
+    #     image = image_sequence[0][i].numpy()
     #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
     #     ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
     #     ax[0, i].set(title='Digit {}'.format(labels[0][i]))
     #
-    #     image = image_sequence[0][i]
+    #     image = image_sequence[0][i].numpy()
     #     ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
     #     ax[0, i].set_axis_off()
     #     ax[1, i].set_axis_off()
     #
-    #     image_second_row = image_sequence[0][i + 5]
-    #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    #     ax[2, i].imshow(np.transpose(image_second_row, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    #     ax[2, i].set(title='Digit {}'.format(labels[0][i + 5]))
-    #
-    #     image = image_sequence[0][i + 5].numpy()
-    #     ax[3, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
-    #     ax[2, i].set_axis_off()
-    #     ax[3, i].set_axis_off()
-    #
-    # image = image_query[0]
+    # image = image_query[0].numpy()
     # # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    # ax[1, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    # ax[1, -1].set(title='Query digit {}'.format(targets.item()))
+    # ax[0, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    # ax[0, -1].set(title='Query digit {}'.format(targets.item()))
     #
-    # ax[2, -1].imshow(np.transpose(outputs, (1, 2, 0)),
+    # ax[1, -1].imshow(np.transpose(outputs, (1, 2, 0)),
     #                  aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    # ax[2, -1].set(title='Reconstructed image')
-    #
-    # ax[1, -1].set_axis_off()
-    # ax[2, -1].set_axis_off()
+    # ax[1, -1].set(title='Reconstructed image')
     #
     # ax[0, -1].set_axis_off()
-    # ax[3, -1].set_axis_off()
+    # ax[1, -1].set_axis_off()
     # plt.tight_layout()
+
+    fig, ax = plt.subplots(nrows=4, ncols=6, sharex='all')
+    for i in range(5):
+        image = image_sequence[0][i]
+        # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+        ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+        ax[0, i].set(title='Digit {}'.format(labels[0][i]))
+
+        image = image_sequence[0][i]
+        ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
+        ax[0, i].set_axis_off()
+        ax[1, i].set_axis_off()
+
+        image_second_row = image_sequence[0][i + 5]
+        # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+        ax[2, i].imshow(np.transpose(image_second_row, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+        ax[2, i].set(title='Digit {}'.format(labels[0][i + 5]))
+
+        image = image_sequence[0][i + 5].numpy()
+        ax[3, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
+        ax[2, i].set_axis_off()
+        ax[3, i].set_axis_off()
+
+    image = image_query[0]
+    # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
+    ax[1, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+    ax[1, -1].set(title='Query digit {}'.format(targets.item()))
+
+    ax[2, -1].imshow(np.transpose(outputs, (1, 2, 0)),
+                     aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    ax[2, -1].set(title='Reconstructed image')
+
+    ax[1, -1].set_axis_off()
+    ax[2, -1].set_axis_off()
+
+    ax[0, -1].set_axis_off()
+    ax[3, -1].set_axis_off()
+    plt.tight_layout()
 
     # query image
     # query_image = image_query[0].numpy()
@@ -444,6 +389,26 @@ def main():
     ax[1, 1].barh(range(args.memory_size), mean_rate_read_val[0])
     ax[1, 1].set_ylim([0, args.memory_size])
     ax[1, 1].set_yticks([])
+    plt.tight_layout()
+
+    # fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0].pcolormesh(read_val[0], cmap='binary')
+    # ax[0].set_ylabel('Recall Response')
+    # ax[1].bar(range(mean_rate_read_val.shape[1]), mean_rate_read_val[0], color='skyblue', alpha=0.7)
+    # ax[1].set_ylabel('Spike mean rate')
+    # plt.tight_layout()
+
+    # 创建图形和轴
+    fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
+    # 第一行 - pcolormesh 散点图
+    ax[0].pcolormesh(read_val[0], cmap='binary')
+    ax[0].set_ylabel('Recall Response')
+    # 第二行 - 柱状图
+    # 请注意，这里的 x 轴是神经元的索引
+    ax[1].bar(range(mean_rate_read_val.shape[1]), mean_rate_read_val[0], color='skyblue', alpha=0.7)
+    ax[1].set_xlabel('Neuron Index')
+    ax[1].set_ylabel('Spike mean rate')
+    # 调整布局
     plt.tight_layout()
 
     fig, ax = plt.subplots(nrows=1, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})

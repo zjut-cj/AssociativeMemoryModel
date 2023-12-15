@@ -501,14 +501,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             model(image_sequence, text, text_query)
         output = output.view(-1, 1, 28, 28)
 
-        # mem = writing_outputs[0].detach().numpy()
-        # synaptic_connections_num = np.count_nonzero(mem)
-        # total_synaptic_connections = mem.size
-        # synaptic_utilization = synaptic_connections_num / total_synaptic_connections
-
-        image_target_array = image_target.clone().detach().to('cpu').numpy()
-        output_array = output.clone().detach().to('cpu').numpy()
-
         ssim = compute_average_ssim(output, image_target)
         loss = criterion(output, image_target)
 

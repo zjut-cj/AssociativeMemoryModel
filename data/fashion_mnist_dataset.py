@@ -69,7 +69,7 @@ class FashionMNISTDataset(Dataset):
             images_text = []
             # images_text.append(normalize_word_vector('a', wordsList, wordVectors, mean_value, variance_value,
             #                                          left_boundary, right_boundary))
-            # images_text.append(normalize_word_vector('picture', wordsList, wordVectors, mean_value, variance_value,
+            # images_text.append(normalize_word_vector('photo', wordsList, wordVectors, mean_value, variance_value,
             #                                          left_boundary, right_boundary))
             # images_text.append(normalize_word_vector('of', wordsList, wordVectors, mean_value, variance_value,
             #                                          left_boundary, right_boundary))
@@ -135,31 +135,66 @@ class SequentialFashionMNISTDataset(Dataset):
 
         # Get 10 random images and their labels (one per class)
         random_images = []
+        random_text = []
         random_labels = []
         text_labels = ['t-shirt', 'trouser', 'pullover', 'dress', 'coat', 'sandal', 'shirt', 'sneaker', 'bag',
-                       'ankle boot']
+                       'ankle', 'boot']
+
+        wordsList = np.load('/home/jww/storage/glove.6B/wordsList_100d.npy')
+
+        wordsList = wordsList.tolist()  # Originally loaded as numpy array
+        wordVectors = np.load('/home/jww/storage/glove.6B/wordVectors_100d.npy')
+
+        mean_value = np.mean(wordVectors)
+        variance_value = np.var(wordVectors)
+        left_boundary = mean_value - 3 * np.sqrt(variance_value)
+        right_boundary = mean_value + 3 * np.sqrt(variance_value)
         for i in range(self.classes):
+            images_text = []
+            images_text.append(normalize_word_vector('a', wordsList, wordVectors, mean_value, variance_value,
+                                                     left_boundary, right_boundary))
+            images_text.append(normalize_word_vector('photo', wordsList, wordVectors, mean_value, variance_value,
+                                                     left_boundary, right_boundary))
+            images_text.append(normalize_word_vector('of', wordsList, wordVectors, mean_value, variance_value,
+                                                     left_boundary, right_boundary))
             class_data = self.data_by_class[i]
             # Use the class index to get the next item in class_data
             random_image, random_label, _ = class_data[self.class_indices[i]]
             random_images.append(random_image)
             random_labels.append(random_label)
+            if random_label == 9:
+                images_text.append(normalize_word_vector(text_labels[9], wordsList, wordVectors, mean_value,
+                                                         variance_value, left_boundary, right_boundary))
+                images_text.append(
+                    normalize_word_vector(text_labels[10], wordsList, wordVectors, mean_value, variance_value,
+                                          left_boundary, right_boundary))
+            else:
+                images_text.append(normalize_word_vector('a', wordsList, wordVectors, mean_value, variance_value,
+                                                         left_boundary, right_boundary))
+                images_text.append(
+                    normalize_word_vector(text_labels[random_label], wordsList, wordVectors, mean_value, variance_value,
+                                          left_boundary, right_boundary))
+            random_text.append(torch.Tensor(np.array(images_text, dtype=np.float32)))
             # Update the class index for the next item
             self.class_indices[i] = (self.class_indices[i] + 1) % len(class_data)
 
         # Stack and concatenate to form the desired shape
         random_images = torch.stack(random_images, dim=0)
+        random_text = torch.stack(random_text, dim=0)
         random_labels = torch.tensor(random_labels)
         # Get a random image and its label
         random_image_index = random.choice(range(self.classes))
         random_image = random_images[random_image_index]
+        random_image_text = random_text[random_image_index]
         random_image_label = random_labels[random_image_index]
 
         return (
             random_images,  # List of 10 random images
-            random_labels,  # List of 10 corresponding labels
-            random_image,   # Random image from the 10
-            random_image_label  # Label of the random image
+            random_text,  # List of 10 corresponding labels
+            random_labels,
+            random_image,  # Random image from the 10
+            random_image_text,  # Label of the random image
+            random_image_label
         )
 
 
@@ -261,7 +296,7 @@ if __name__ == '__main__':
         transforms.ToTensor()
     ])
 
-    fashion_mnist_dataset = FashionMNISTDataset(root='/usr/common/datasets/FashionMNIST', train=True,
+    fashion_mnist_dataset = SequentialFashionMNISTDataset(root='/usr/common/datasets/FashionMNIST', train=True,
                                                 classes=10, dataset_size=100, image_transform=transform)
     image_sequence, text, labels, image_query, targets, target_label = fashion_mnist_dataset[0]
 

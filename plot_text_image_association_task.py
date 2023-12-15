@@ -170,8 +170,6 @@ def main():
                                           sentence_length=50,
                                           refractory_time_steps=args.refractory_time_steps)
 
-    # image_embedding_layer.threshold_balancing([args.thr, args.thr, args.thr, args.thr])
-    # image_embedding_layer.threshold_balancing([1.8209, 11.5916, 4.1207, 2.6341])
 
     # Create the model
     model = TextImageAssociation(
