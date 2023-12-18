@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="root@connect.westc.gpuhub.com:16369" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="jww@10.12.41.197:6006 password" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
       <paths name="jww@10.12.41.197:6006 password">
         <serverdata>
@@ -9,10 +9,10 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="root@connect.westc.gpuhub.com:16369">
+      <paths name="jww@10.12.41.197:6006 password (1)">
         <serverdata>
           <mappings>
-            <mapping deploy="/root/Projects/AssociativeMemoryModel" local="$PROJECT_DIR$" />
+            <mapping deploy="/home/jww/projects/AssociativeMemoryModel" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

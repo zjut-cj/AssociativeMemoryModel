@@ -33,7 +33,7 @@ from models.neuron_models import IafPscDelta
 from models.text_cnn import SpikingTextCNN
 from utils.utils import compute_average_ssim
 # from models.protonet_models import SpikingProtoNet
-from models.spiking_model import SpikingProtoNet
+from models.spiking_model import SpikingProtoNet, FashionMNISTSpikingProtoNet, DecodingNet
 # from models.spiking_model_4conv import SpikingProtoNet
 
 torch.autograd.set_detect_anomaly(True)
@@ -273,6 +273,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 param.requires_grad = False
     else:
         # Create ProtoNet
+        # use 3 convolution layer
         image_embedding_layer = SpikingProtoNet(IafPscDelta(thr=args.thr,
                                                             perfect_reset=args.perfect_reset,
                                                             refractory_time_steps=args.refractory_time_steps,
@@ -417,7 +418,7 @@ def main_worker(gpu, num_gpus_per_node, args):
             # Use the directory that is stored in checkpoint if we resume training
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
-            log_dir = os.path.join('results', 'text_image_association', 'logs', time_stamp +
+            log_dir = os.path.join('results', 'text_image_association', '5_pairs', 'logs', time_stamp +
                                    f'_thr-{args.thr}-{suffix}_fashion_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
@@ -462,7 +463,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
-                'results', 'text_image_association',
+                'results', 'text_image_association', '5_pairs',
                 time_stamp + '_' + f'_thr-{args.thr}-{suffix}' + f'_times-{args.num_time_steps}'))
 
 

@@ -27,7 +27,7 @@ class MemoryLayer(torch.nn.Module):
         # 表示输入和key层之间的权重以及输入和value层的输入
         self.W = torch.nn.Parameter(torch.Tensor(hidden_size + hidden_size, input_size))
         # value层到key层的反馈权重
-        # self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, input_size + hidden_size))
+        self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, input_size + hidden_size))
         self.reset_parameters()
 
     def forward(self, x: torch.Tensor, mem: Optional[torch.Tensor] = None, recall=False, states: Optional[Tuple[

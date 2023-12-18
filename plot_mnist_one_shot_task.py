@@ -19,7 +19,7 @@ from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
 from models.network_models import BackUp, AttentionMemoryModel, InhibitoryMemoryModel
 from models.neuron_models import IafPscDelta
-from utils.utils import salt_pepper_noise, apply_mask
+from utils.utils import salt_pepper_noise, apply_mask, gaussian_perturb_image
 # from models.protonet_models import SpikingProtoNet
 from models.spiking_model import SpikingProtoNet
 
@@ -86,7 +86,7 @@ def main():
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+    test_set = HeteroAssociativeMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
                             dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
@@ -163,7 +163,8 @@ def main():
     labels = labels.clone().to('cpu').detach().numpy()
     original_query_image = image_query.clone()
     # image_query = salt_pepper_noise(image_query, 1.0)
-    # image_query = apply_mask(image_query, 0.5)
+    # image_query = gaussian_perturb_image(image_query, 1.0)
+    # image_query = apply_mask(image_query, 0.2)
 
     # Get dataset example and run the model
     # image_sequence, labels, image_query, targets = test_set[0]
@@ -194,6 +195,7 @@ def main():
     decoder_output_l1 = decoder_outputs[0].detach().numpy()
     decoder_output_l2 = decoder_outputs[1].detach().numpy()
     outputs = outputs.view(1, 28, 28).detach().numpy()
+    targets = targets.detach().numpy()
 
     mean_rate_image_encoding = np.sum(images_encoded, axis=1) / (1e-3 * args.sequence_length * args.num_time_steps)
     mean_rate_query_encoding = np.sum(query_encoded, axis=1) / (1e-3 * args.num_time_steps)
@@ -312,123 +314,124 @@ def main():
     # ax.set_axis_off()
     # plt.tight_layout()
 
-    # query_image = image_query[0].numpy()
-    # original_query = original_query_image[0].numpy()
-    # fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
-    # ax[0].imshow(np.transpose(original_query, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
-    # ax[1].imshow(np.transpose(query_image, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(query_image), vmax=np.max(query_image))
-    # ax[2].imshow(np.transpose(outputs, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    # ax[0].set_axis_off()
-    # ax[1].set_axis_off()
-    # ax[2].set_axis_off()
-    # fig.subplots_adjust(hspace=0)
+    # output query and reconstruction
+    query_image = image_sequence[0][targets[0]]
+    original_query = original_query_image[0].numpy()
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
+    ax[1].imshow(np.transpose(original_query, (1, 2, 0)),
+                    aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
+    ax[0].imshow(np.transpose(query_image, (1, 2, 0)),
+                    aspect='equal', cmap='gray', vmin=0, vmax=1)
+    ax[2].imshow(np.transpose(outputs, (1, 2, 0)),
+                    aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    ax[0].set_axis_off()
+    ax[1].set_axis_off()
+    ax[2].set_axis_off()
+    fig.subplots_adjust(hspace=0)
+    plt.tight_layout()
+
+    # fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0, 0].pcolormesh(images_encoded[0].T, cmap='binary')
+    # ax[0, 0].set_ylabel('images')
+    # ax[0, 1].barh(range(args.embedding_size), mean_rate_image_encoding[0])
+    # ax[0, 1].set_ylim([0, args.embedding_size])
+    # ax[0, 1].set_yticks([])
+    # ax[1, 0].pcolormesh(query_encoded[0].T, cmap='binary')
+    # ax[1, 0].set_ylabel('query')
+    # ax[1, 1].barh(range(args.embedding_size), mean_rate_query_encoding[0])
+    # ax[1, 1].set_ylim([0, args.embedding_size])
+    # ax[1, 1].set_yticks([])
     # plt.tight_layout()
-
-    fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
-    ax[0, 0].pcolormesh(images_encoded[0].T, cmap='binary')
-    ax[0, 0].set_ylabel('images')
-    ax[0, 1].barh(range(args.embedding_size), mean_rate_image_encoding[0])
-    ax[0, 1].set_ylim([0, args.embedding_size])
-    ax[0, 1].set_yticks([])
-    ax[1, 0].pcolormesh(query_encoded[0].T, cmap='binary')
-    ax[1, 0].set_ylabel('query')
-    ax[1, 1].barh(range(args.embedding_size), mean_rate_query_encoding[0])
-    ax[1, 1].set_ylim([0, args.embedding_size])
-    ax[1, 1].set_yticks([])
-    plt.tight_layout()
-
-    # query encoding
-    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
-    # ax.set_ylabel('Neuron Index')
-    # ax.set_xlabel('Time Step')
-    # ax.pcolormesh(query_encoded[0].T, cmap='binary')
+    #
+    # # query encoding
+    # # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # # ax.set_ylabel('Neuron Index')
+    # # ax.set_xlabel('Time Step')
+    # # ax.pcolormesh(query_encoded[0].T, cmap='binary')
+    # # plt.tight_layout()
+    #
+    # fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0, 0].pcolormesh(write_key[0].T, cmap='binary')
+    # ax[0, 0].set_ylabel('Memory Perception')
+    # ax[0, 1].barh(range(args.memory_size), mean_rate_write_key[0])
+    # ax[0, 1].set_ylim([0, args.memory_size])
+    # ax[0, 1].set_yticks([])
+    # ax[1, 0].pcolormesh(write_val[0].T, cmap='binary')
+    # ax[1, 0].set_ylabel('Memory Response')
+    # ax[1, 1].barh(range(args.memory_size), mean_rate_write_val[0])
+    # ax[1, 1].set_ylim([0, args.memory_size])
+    # ax[1, 1].set_yticks([])
     # plt.tight_layout()
-
-    fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
-    ax[0, 0].pcolormesh(write_key[0].T, cmap='binary')
-    ax[0, 0].set_ylabel('Memory Perception')
-    ax[0, 1].barh(range(args.memory_size), mean_rate_write_key[0])
-    ax[0, 1].set_ylim([0, args.memory_size])
-    ax[0, 1].set_yticks([])
-    ax[1, 0].pcolormesh(write_val[0].T, cmap='binary')
-    ax[1, 0].set_ylabel('Memory Response')
-    ax[1, 1].barh(range(args.memory_size), mean_rate_write_val[0])
-    ax[1, 1].set_ylim([0, args.memory_size])
-    ax[1, 1].set_yticks([])
-    plt.tight_layout()
-
-    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
-    # ax.matshow(mem[0], cmap='RdBu')
+    #
+    # # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # # ax.matshow(mem[0], cmap='RdBu')
+    # # plt.tight_layout()
+    #
+    # fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
+    # cax = ax.imshow(mem[0], cmap='viridis')
+    # # 设置横坐标和纵坐标的刻度及标签
+    # xticks_interval = 20
+    # yticks_interval = 20
+    # ax.set_xticks(np.arange(0, 100, xticks_interval))
+    # ax.set_yticks(np.arange(0, 100, yticks_interval))
+    # ax.set_xticklabels(np.arange(0, 100, xticks_interval))
+    # ax.set_yticklabels(np.arange(0, 100, yticks_interval))
+    # # 添加颜色条
+    # fig.colorbar(cax)
+    # ax.set_title("Synaptic weights between Perception and Response neurons")
     # plt.tight_layout()
-
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
-    cax = ax.imshow(mem[0], cmap='viridis')
-    # 设置横坐标和纵坐标的刻度及标签
-    xticks_interval = 20
-    yticks_interval = 20
-    ax.set_xticks(np.arange(0, 100, xticks_interval))
-    ax.set_yticks(np.arange(0, 100, yticks_interval))
-    ax.set_xticklabels(np.arange(0, 100, xticks_interval))
-    ax.set_yticklabels(np.arange(0, 100, yticks_interval))
-    # 添加颜色条
-    fig.colorbar(cax)
-    ax.set_title("Synaptic weights between Perception and Response neurons")
-    plt.tight_layout()
-
-    fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
-    ax[0, 0].pcolormesh(read_key[0].T, cmap='binary')
-    ax[0, 0].set_ylabel('Recall Perception')
-    ax[0, 1].barh(range(args.memory_size), mean_rate_read_key[0])
-    ax[0, 1].set_ylim([0, args.memory_size])
-    ax[0, 1].set_yticks([])
-    ax[1, 0].pcolormesh(read_val[0].T, cmap='binary')
-    ax[1, 0].set_ylabel('Recall Response')
-    ax[1, 1].barh(range(args.memory_size), mean_rate_read_val[0])
-    ax[1, 1].set_ylim([0, args.memory_size])
-    ax[1, 1].set_yticks([])
-    plt.tight_layout()
-
-    # fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    #
+    # fig, ax = plt.subplots(nrows=2, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0, 0].pcolormesh(read_key[0].T, cmap='binary')
+    # ax[0, 0].set_ylabel('Recall Perception')
+    # ax[0, 1].barh(range(args.memory_size), mean_rate_read_key[0])
+    # ax[0, 1].set_ylim([0, args.memory_size])
+    # ax[0, 1].set_yticks([])
+    # ax[1, 0].pcolormesh(read_val[0].T, cmap='binary')
+    # ax[1, 0].set_ylabel('Recall Response')
+    # ax[1, 1].barh(range(args.memory_size), mean_rate_read_val[0])
+    # ax[1, 1].set_ylim([0, args.memory_size])
+    # ax[1, 1].set_yticks([])
+    # plt.tight_layout()
+    #
+    # # fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # # ax[0].pcolormesh(read_val[0], cmap='binary')
+    # # ax[0].set_ylabel('Recall Response')
+    # # ax[1].bar(range(mean_rate_read_val.shape[1]), mean_rate_read_val[0], color='skyblue', alpha=0.7)
+    # # ax[1].set_ylabel('Spike mean rate')
+    # # plt.tight_layout()
+    #
+    # # 创建图形和轴
+    # fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
+    # # 第一行 - pcolormesh 散点图
     # ax[0].pcolormesh(read_val[0], cmap='binary')
     # ax[0].set_ylabel('Recall Response')
+    # # 第二行 - 柱状图
+    # # 请注意，这里的 x 轴是神经元的索引
     # ax[1].bar(range(mean_rate_read_val.shape[1]), mean_rate_read_val[0], color='skyblue', alpha=0.7)
+    # ax[1].set_xlabel('Neuron Index')
     # ax[1].set_ylabel('Spike mean rate')
+    # # 调整布局
     # plt.tight_layout()
-
-    # 创建图形和轴
-    fig, ax = plt.subplots(nrows=2, ncols=1, sharex='col', gridspec_kw={'height_ratios': [3, 1]})
-    # 第一行 - pcolormesh 散点图
-    ax[0].pcolormesh(read_val[0], cmap='binary')
-    ax[0].set_ylabel('Recall Response')
-    # 第二行 - 柱状图
-    # 请注意，这里的 x 轴是神经元的索引
-    ax[1].bar(range(mean_rate_read_val.shape[1]), mean_rate_read_val[0], color='skyblue', alpha=0.7)
-    ax[1].set_xlabel('Neuron Index')
-    ax[1].set_ylabel('Spike mean rate')
-    # 调整布局
-    plt.tight_layout()
-
-    fig, ax = plt.subplots(nrows=1, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
-    ax[0].pcolormesh(decoder_output_l1[0].T, cmap='binary')
-    ax[0].set_ylabel('decoder layer 1')
-    ax[1].barh(range(256), mean_rate_decoder_output_l1[0])
-    ax[1].set_ylim([0, 256])
-    ax[1].set_yticks([])
-
-    fig, ax = plt.subplots(nrows=1, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
-    ax[0].pcolormesh(decoder_output_l2[0].T, cmap='binary')
-    ax[0].set_ylabel('decoder layer 2')
-    ax[1].barh(range(784), mean_rate_decoder_output_l2[0])
-    ax[1].set_ylim([0, 784])
-    ax[1].set_yticks([])
-
-    fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
-    ax.imshow(np.transpose(outputs, (1, 2, 0)), aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    ax.set(title='Reconstructed image')
-    plt.tight_layout()
+    #
+    # fig, ax = plt.subplots(nrows=1, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0].pcolormesh(decoder_output_l1[0].T, cmap='binary')
+    # ax[0].set_ylabel('decoder layer 1')
+    # ax[1].barh(range(256), mean_rate_decoder_output_l1[0])
+    # ax[1].set_ylim([0, 256])
+    # ax[1].set_yticks([])
+    #
+    # fig, ax = plt.subplots(nrows=1, ncols=2, sharex='col', gridspec_kw={'width_ratios': [10, 1]})
+    # ax[0].pcolormesh(decoder_output_l2[0].T, cmap='binary')
+    # ax[0].set_ylabel('decoder layer 2')
+    # ax[1].barh(range(784), mean_rate_decoder_output_l2[0])
+    # ax[1].set_ylim([0, 784])
+    # ax[1].set_yticks([])
+    #
+    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
+    # ax.imshow(np.transpose(outputs, (1, 2, 0)), aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    # ax.set(title='Reconstructed image')
+    # plt.tight_layout()
 
     plt.show()
 

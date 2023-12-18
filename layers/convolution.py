@@ -20,6 +20,7 @@ class Conv2DLayer(torch.nn.Module):
         self.fan_out = fan_out
         self.k_size = k_size
         self.padding = padding
+        self.stride = stride
         self.conv2d = torch.nn.Conv2d(fan_in, fan_out, (k_size, k_size), stride=(stride, stride),
                                       padding=(padding, padding), bias=use_bias)
         self.dynamics = dynamics
@@ -27,7 +28,9 @@ class Conv2DLayer(torch.nn.Module):
 
     def forward(self, x: torch.Tensor, states: Optional[Tuple[torch.Tensor, ...]] = None) -> Tuple[torch.Tensor, ...]:
         batch_size, sequence_length, c, h, w = x.size()
-        hidden_size = self.fan_out * h * w
+        new_h = int((h - self.k_size + 2 * self.padding) / self.stride + 1)
+        new_w = int((w - self.k_size + 2 * self.padding) / self.stride + 1)
+        hidden_size = self.fan_out * new_h * new_w
         assert self.fan_in == c
 
         if states is None:
@@ -40,7 +43,8 @@ class Conv2DLayer(torch.nn.Module):
             output, states = self.dynamics(output, states)
             output_sequence.append(output)
 
-        output = torch.reshape(torch.stack(output_sequence, dim=1), [batch_size, sequence_length, self.fan_out, h, w])
+        output = torch.reshape(torch.stack(output_sequence, dim=1),
+                               [batch_size, sequence_length, self.fan_out, new_h, new_w])
 
         return output, max(max_activation)
 

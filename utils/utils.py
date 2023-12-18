@@ -127,16 +127,37 @@ def apply_mask(image, mask_ratio):
     return output
 
 
+# def gaussian_perturb_image(img, sigma=0.1):
+#     #print(img.shape)
+#     if len(img.shape) != 1:
+#         total_img_len = np.prod(np.array(img.shape))
+#         img = img.reshape(total_img_len)
+#     N = len(img)
+#     variance = torch.tensor(np.identity(N) * sigma).float()
+#     perturb = torch.normal(0, sigma, size=[N, ])
+#     noisy_image = torch.clamp(torch.abs(img + perturb), 0, 1)
+#     return noisy_image.reshape([28, 28])
+
 def gaussian_perturb_image(img, sigma=0.1):
-    #print(img.shape)
+    batch_size, channel, h, w = img.size()
+    # 将输入图像展平
     if len(img.shape) != 1:
-        total_img_len = np.prod(np.array(img.shape))
-        img = img.reshape(total_img_len)
+        total_img_len = np.prod(np.array(img.shape[1:]))
+        img = img.reshape(-1)
+
     N = len(img)
+
+    # 创建协方差矩阵
     variance = torch.tensor(np.identity(N) * sigma).float()
-    perturb = torch.normal(0,sigma,size=[N,])
-    noisy_image = torch.clamp(torch.abs(img + perturb),0,1)
-    return noisy_image.reshape([28, 28])
+
+    # 生成高斯扰动
+    perturb = torch.normal(0, sigma, size=[N, ])
+
+    # 添加扰动并夹紧
+    noisy_image = torch.clamp(torch.abs(img + perturb), 0, 1)
+
+    # 重新塑形为原始图像形状
+    return noisy_image.reshape([batch_size, channel, h, w])
 
 
 if __name__ == "__main__":
@@ -164,7 +185,8 @@ if __name__ == "__main__":
     plt.show()
 
     # 添加高斯噪声
-    noisy_image = gaussian_perturb_image(image, sigma=0.5)
+    noisy_image = gaussian_perturb_image(image, sigma=0.1)
+    # noisy_image = apply_mask(image, mask_ratio=0.1)
 
     # 显示添加噪声后的图像
     plt.imshow(noisy_image, cmap='gray')
