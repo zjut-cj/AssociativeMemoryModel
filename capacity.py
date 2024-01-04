@@ -220,9 +220,6 @@ def main_worker(gpu, num_gpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
 
     # Data loading code
-    image_transform = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor(),
-    ])
 
     train_set = RandomVectorDataset(sequence_length=args.sequence_length, num_classes=args.num_classes,
                                     feature_size=args.feature_size, inf_data=args.inf_data, dataset_size=3000,
@@ -410,7 +407,7 @@ def main_worker(gpu, num_gpus_per_node, args):
             # Use the directory that is stored in checkpoint if we resume training
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
-            log_dir = os.path.join('results', 'diff_feature_size', '10_features', 'logs', time_stamp +
+            log_dir = os.path.join('results', 'diff_feature_size', '20_features', 'logs', time_stamp +
                                    f'_thr-{args.thr}-{suffix}_attention_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
@@ -455,7 +452,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
-                'results', 'diff_feature_size', '10_features',
+                'results', 'diff_feature_size', '20_features',
                 time_stamp + '_' + f'_thr-{args.thr}-{suffix}_with_encoding' + f'_times-{args.num_time_steps}'))
 
 
@@ -463,11 +460,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')
     data_time = utils.meters.AverageMeter('Data', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
-    ssims = utils.meters.AverageMeter('SSIM', ':.4e')
+    SSIMs = utils.meters.AverageMeter('SSIM', ':.4e')
     reg_losses = utils.meters.AverageMeter('RegLoss', ':.4e')
     progress = utils.meters.ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, ssims],
+        [batch_time, data_time, losses, SSIMs],
         prefix="Epoch: [{}]".format(epoch))
 
     # Switch to train mode
@@ -499,7 +496,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         output_array = output.clone().detach().to('cpu').numpy()
         image_target_array = image_target.clone().detach().to('cpu').numpy()
 
-        ssim = compute_average_ssim(output, image_target)
+        SSIM = compute_average_ssim(output, image_target)
         loss = criterion(output, image_target)
 
         # Regularization
@@ -531,7 +528,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         # Record loss
         losses.update(loss.item(), image_sequence.size(0))
-        ssims.update(ssim.item(), image_sequence.size(0))
+        SSIMs.update(SSIM.item(), image_sequence.size(0))
         reg_losses.update(act_reg_loss, image_sequence.size(0))
 
         # Compute gradient
@@ -553,16 +550,16 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         if i % args.print_freq == 0:
             progress.display(i)
 
-    return losses.avg, reg_losses.avg, ssims.avg
+    return losses.avg, reg_losses.avg, SSIMs.avg
 
 
 def validate(data_loader, model, criterion, args, prefix="Val: "):
     batch_time = utils.meters.AverageMeter('Time', ':6.3f')
     losses = utils.meters.AverageMeter('Loss', ':.4e')
-    ssims = utils.meters.AverageMeter('SSIM', ':.4e')
+    SSIMs = utils.meters.AverageMeter('SSIM', ':.4e')
     progress = utils.meters.ProgressMeter(
         len(data_loader),
-        [batch_time, losses, ssims],
+        [batch_time, losses, SSIMs],
         prefix=prefix)
 
     # Switch to evaluate mode
@@ -584,12 +581,12 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             # Compute output
             output, *_ = model(image_sequence, image_query)
             output = output.view(-1, 1, 10, 10)
-            ssim = compute_average_ssim(output, image_target)
+            SSIM = compute_average_ssim(output, image_target)
             loss = criterion(output, image_target)
 
             # Record loss
             losses.update(loss.item(), image_sequence.size(0))
-            ssims.update(ssim.item(), image_sequence.size(0))
+            SSIMs.update(SSIM.item(), image_sequence.size(0))
 
             # Measure elapsed time
             batch_time.update(time.time() - end)
@@ -598,9 +595,9 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             if i % args.print_freq == 0:
                 progress.display(i)
 
-        print(' * Loss {losses.avg:.3f}'.format(losses=losses), ' * SSIM {ssims.avg:.3f}'.format(ssims=ssims))
+        print(' * Loss {losses.avg:.3f}'.format(losses=losses), ' * SSIM {SSIMs.avg:.3f}'.format(SSIMs=SSIMs))
 
-    return losses.avg, ssims.avg
+    return losses.avg, SSIMs.avg
 
 
 def adjust_learning_rate(optimizer, epoch, args):

@@ -229,8 +229,6 @@ def main():
     # image_sequence = image_sequence.unsqueeze(0)
     # image_query = image_query.unsqueeze(0)
 
-    image_sequence_array = image_sequence.clone().to('cpu').detach().numpy()
-    image_query_array = image_query.clone().to('cpu').detach().numpy()
     image_sequence_shape = image_sequence.shape
     labels_shape = labels.shape
     image_query_shape = image_query.shape
@@ -247,6 +245,7 @@ def main():
     image_target_array = image_target.detach().numpy()
     images_labels = labels.detach().numpy()
     query_label = targets.detach().numpy()
+    image_query = image_query.detach().numpy()
     mem = writing_outputs[0].detach().numpy()
     write_key = writing_outputs[1].detach().numpy()
     write_val = writing_outputs[2].detach().numpy()
@@ -309,7 +308,7 @@ def main():
     for i in range(image_sequence.size()[1]):
         image = image_sequence[0][i].numpy()
         # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-        ax[i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
+        ax[i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
         ax[i].set(title='a {}'.format(text_labels[i]))
         ax[i].set_axis_off()
 
@@ -320,64 +319,14 @@ def main():
     ax[-1].set_axis_off()
     plt.tight_layout()
 
-    # fig, ax = plt.subplots(nrows=4, ncols=6, sharex='all')
-    # for i in range(5):
-    #     image = image_sequence[0][i]
-    #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    #     ax[0, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    #     ax[0, i].set(title='Digit {}'.format(labels[0][i]))
-    #
-    #     image = image_sequence[0][i]
-    #     ax[1, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
-    #     ax[0, i].set_axis_off()
-    #     ax[1, i].set_axis_off()
-    #
-    #     image_second_row = image_sequence[0][i + 5]
-    #     # ax[0, i].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    #     ax[2, i].imshow(np.transpose(image_second_row, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    #     ax[2, i].set(title='Digit {}'.format(labels[0][i + 5]))
-    #
-    #     image = image_sequence[0][i + 5].numpy()
-    #     ax[3, i].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', cmap='gray', vmin=0, vmax=1)
-    #     ax[2, i].set_axis_off()
-    #     ax[3, i].set_axis_off()
-    #
-    # image = image_query[0]
-    # # ax[0, -1].imshow(np.transpose(image, (2, 1, 0)), interpolation='nearest', cmap='viridis', origin='lower')
-    # ax[1, -1].imshow(np.transpose(image, (1, 2, 0)), aspect='equal', vmin=0, vmax=1)
-    # ax[1, -1].set(title='Query digit {}'.format(targets.item()))
-    #
-    # ax[2, -1].imshow(np.transpose(outputs, (1, 2, 0)),
-    #                  aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    # ax[2, -1].set(title='Reconstructed image')
-    #
-    # ax[1, -1].set_axis_off()
-    # ax[2, -1].set_axis_off()
-    #
-    # ax[0, -1].set_axis_off()
-    # ax[3, -1].set_axis_off()
-    # plt.tight_layout()
-
-    # query image
-    # query_image = image_query[0].numpy()
-    # fig, ax = plt.subplots(nrows=1, ncols=1, sharex='all')
-    # ax.imshow(np.transpose(query_image, (1, 2, 0)),
-    #           aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
-    # ax.set_axis_off()
-    # plt.tight_layout()
-
-    # query_image = image_query[0].numpy()
-    # original_query = original_query_image[0].numpy()
-    # fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
+    # original_query = image_query[0]
+    # fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(5, 10))
     # ax[0].imshow(np.transpose(original_query, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
-    # ax[1].imshow(np.transpose(query_image, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(query_image), vmax=np.max(query_image))
-    # ax[2].imshow(np.transpose(outputs, (1, 2, 0)),
-    #                 aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
+    #              aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
+    # ax[1].imshow(np.transpose(outputs, (1, 2, 0)),
+    #              aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
     # ax[0].set_axis_off()
     # ax[1].set_axis_off()
-    # ax[2].set_axis_off()
     # fig.subplots_adjust(hspace=0)
     # plt.tight_layout()
 

@@ -76,8 +76,8 @@ if __name__ == "__main__":
     for sample in dataloader:
         random_images, random_labels, random_image, random_image_label = sample
         random_images_array = random_images.detach().numpy()
+        random_labels_array = random_labels.detach().numpy()
         random_image_array = random_image.detach().numpy()
-        random_images_array = random_images.detach().numpy()
-        random_image_array = random_image.detach().numpy()
+        random_image_label_array = random_image_label.detach().numpy()
         # Now you have the required data for each batch
         print(random_images, random_labels, random_image, random_image_label)

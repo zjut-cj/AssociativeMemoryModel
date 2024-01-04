@@ -86,7 +86,7 @@ def main():
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = HeteroAssociativeMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+    test_set = RepeatMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
                             dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
@@ -163,7 +163,7 @@ def main():
     labels = labels.clone().to('cpu').detach().numpy()
     original_query_image = image_query.clone()
     # image_query = salt_pepper_noise(image_query, 1.0)
-    # image_query = gaussian_perturb_image(image_query, 1.0)
+    image_query = gaussian_perturb_image(image_query, 0.3)
     # image_query = apply_mask(image_query, 0.2)
 
     # Get dataset example and run the model

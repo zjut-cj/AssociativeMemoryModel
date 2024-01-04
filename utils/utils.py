@@ -1,40 +1,49 @@
 import numpy as np
 import torch
+import pytorch_ssim
+from torch.autograd import Variable
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as compare_ssim
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
+from sklearn.metrics.pairwise import cosine_similarity
 
+
+# def compute_average_ssim(images, targets):
+#     # 转换PyTorch张量为NumPy数组
+#     images = images.cpu().detach().numpy()
+#     targets = targets.cpu().detach().numpy()
+#
+#     # 初始化一个列表来存储每对图像的SSIM
+#     ssim_values = []
+#
+#     # 确保图像的形状是[batch_size, c, h, w]
+#     assert images.shape == targets.shape
+#
+#     batch_size, channels, height, width = images.shape
+#
+#     # 遍历每个样本
+#     for i in range(batch_size):
+#         image = images[i].squeeze()
+#         target = targets[i].squeeze()
+#
+#         # 计算单个图像的SSIM
+#         ssim = compare_ssim(image, target, data_range=1.0)
+#
+#         # 将SSIM值添加到列表中
+#         ssim_values.append(ssim)
+#
+#     # 计算SSIM的平均值
+#     average_ssim = np.mean(ssim_values)
+#
+#     return average_ssim
 
 def compute_average_ssim(images, targets):
-    # 转换PyTorch张量为NumPy数组
-    images = images.cpu().detach().numpy()
-    targets = targets.cpu().detach().numpy()
+    if torch.cuda.is_available():
+        images = images.cuda()
+        targets = targets.cuda()
 
-    # 初始化一个列表来存储每对图像的SSIM
-    ssim_values = []
-
-    # 确保图像的形状是[batch_size, c, h, w]
-    assert images.shape == targets.shape
-
-    batch_size, channels, height, width = images.shape
-
-    # 遍历每个样本
-    for i in range(batch_size):
-        image = images[i].squeeze()
-        target = targets[i].squeeze()
-
-        image_shape = image.shape
-        target_shape = target.shape
-
-        # 计算单个图像的SSIM
-        ssim = compare_ssim(image, target, data_range=1.0)
-
-        # 将SSIM值添加到列表中
-        ssim_values.append(ssim)
-
-    # 计算SSIM的平均值
-    average_ssim = np.mean(ssim_values)
+    average_ssim = pytorch_ssim.ssim(images, targets)
 
     return average_ssim
 
@@ -70,6 +79,37 @@ def compute_average_psnr(images, targets):
     average_psnr = np.mean(psnr_values)
 
     return average_psnr
+
+
+def compute_average_cosine_similarity(images, targets):
+    # 转换PyTorch张量为NumPy数组
+    images = images.cpu().detach().numpy()
+    targets = targets.cpu().detach().numpy()
+
+    # 初始化一个列表来存储每对图像的余弦相似度
+    cosine_sim_values = []
+
+    # 确保图像的形状是[batch_size, c, h, w]
+    assert images.shape == targets.shape
+
+    batch_size, channels, height, width = images.shape
+
+    # 遍历每个样本
+    for i in range(batch_size):
+        image = images[i].reshape(-1)
+        target = targets[i].reshape(-1)
+
+        # 计算单个图像的余弦相似度
+        cosine_sim = cosine_similarity([image], [target])[0, 0]
+
+        # 将余弦相似度值添加到列表中
+        cosine_sim_values.append(cosine_sim)
+
+    # 计算余弦相似度的平均值
+    average_cosine_sim = np.mean(cosine_sim_values)
+
+    return average_cosine_sim
+
 
 
 # 添加椒盐噪声
@@ -142,7 +182,6 @@ def gaussian_perturb_image(img, sigma=0.1):
     batch_size, channel, h, w = img.size()
     # 将输入图像展平
     if len(img.shape) != 1:
-        total_img_len = np.prod(np.array(img.shape[1:]))
         img = img.reshape(-1)
 
     N = len(img)

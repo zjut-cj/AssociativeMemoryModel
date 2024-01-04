@@ -27,7 +27,7 @@ class MemoryLayer(torch.nn.Module):
         # 表示输入和key层之间的权重以及输入和value层的输入
         self.W = torch.nn.Parameter(torch.Tensor(hidden_size + hidden_size, input_size))
         # value层到key层的反馈权重
-        self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, input_size + hidden_size))
+        # self.feedback_weights = torch.nn.Parameter(torch.Tensor(hidden_size, input_size + hidden_size))
         self.reset_parameters()
 
     def forward(self, x: torch.Tensor, mem: Optional[torch.Tensor] = None, recall=False, states: Optional[Tuple[
@@ -55,7 +55,7 @@ class MemoryLayer(torch.nn.Module):
         # key和value层的脉冲输出
         key_output_sequence = []
         val_output_sequence = []
-        # excitatory_mem = []
+        excitatory_mem = []
         if recall:
             for t in range(sequence_length):
                 # key层神经元在t时刻接收到上一个时间步的value层的反馈
@@ -121,7 +121,7 @@ class MemoryLayer(torch.nn.Module):
                 # val层神经元在t时刻的脉冲val和当前时刻的神经元状态val_states
                 val, val_states = self.dynamics(iv.select(1, t) + ikv_t, val_states)
 
-                # excitatory_mem.append(val_states[1])
+                excitatory_mem.append(val_states[1])
 
                 # 更新key层和value层的迹
                 key_trace = exp_convolve(key, key_trace, self.decay_trace)
@@ -132,34 +132,37 @@ class MemoryLayer(torch.nn.Module):
                 delta_mem = self.plasticity_rule(key_trace, val_trace, mem)
                 mem = mem + delta_mem
 
-                # if t == 220:
-                #     noise = torch.rand_like(mem) * 0.5
-                #     mem = mem + noise
-                #     mem = torch.clamp(mem, 0, 1)
+                if t == 220:
+                    noise = torch.rand_like(mem) * 0.6
+                    mem = mem + noise
+                    mem = torch.clamp(mem, 0, 1)
 
 
                 key_output_sequence.append(key)
                 val_output_sequence.append(val)
-            # excitatory_mem = torch.stack(excitatory_mem, dim=1)
-            # excitatory_mem_avg = torch.sum(excitatory_mem, dim=2) / 100.0
-            # excitatory_mem_array = excitatory_mem.detach().to('cpu').numpy()
-            # excitatory_mem_avg_array = excitatory_mem_avg.detach().to('cpu').numpy()
-            #
-            # # 创建时间步数组（横坐标）
-            # time_steps = range(1, 501)
-            # # 计算 excitatory_data 的平均值
-            # excitatory_mean = np.mean(excitatory_mem_avg_array[0])
-            # # 绘制折线图
-            # plt.plot(time_steps, excitatory_mem_avg_array[0], label='Excitatory', color='blue')
-            # # 绘制 excitatory_data 平均值的虚线
-            # plt.axhline(y=excitatory_mean, linestyle='--', color='blue', label='Excitatory Mean')
-            # # 添加图例
-            # plt.legend()
-            # # 添加坐标轴标题
-            # plt.xlabel('Time steps')
-            # plt.ylabel('Avg Input Current')
-            # # 显示图形
-            # plt.show()
+            excitatory_mem = torch.stack(excitatory_mem, dim=1)
+            excitatory_mem_avg = torch.sum(excitatory_mem, dim=2) / 100.0
+            excitatory_mem_array = excitatory_mem.detach().to('cpu').numpy()
+            excitatory_mem_avg_array = excitatory_mem_avg.detach().to('cpu').numpy()
+
+            np.savetxt('/home/jww/projects/AssociativeMemoryModel/without_inhibitory.csv', excitatory_mem_avg_array[0], delimiter=',',
+                       fmt='%.6f')
+
+            # 创建时间步数组（横坐标）
+            time_steps = range(1, 501)
+            # 计算 excitatory_data 的平均值
+            excitatory_mean = np.mean(excitatory_mem_avg_array[0])
+            # 绘制折线图
+            plt.plot(time_steps, excitatory_mem_avg_array[0], label='Excitatory', color='blue')
+            # 绘制 excitatory_data 平均值的虚线
+            plt.axhline(y=excitatory_mean, linestyle='--', color='blue', label='Excitatory Mean')
+            # 添加图例
+            plt.legend()
+            # 添加坐标轴标题
+            plt.xlabel('Time steps')
+            plt.ylabel('Avg Input Current')
+            # 显示图形
+            plt.show()
 
         states = [key_states, val_states, key_trace, val_trace, val_buffer]
 
@@ -234,6 +237,7 @@ class InhibitionMemoryLayer(torch.nn.Module):
         # key和value层的脉冲输出
         key_output_sequence = []
         val_output_sequence = []
+        # mem_stack = []
         # excitatory_mem = []
         # inhibitory_mem = []
         # excitatory_inhibitory_array = excitatory_inhibitory.clone().detach().to('cpu').numpy()
@@ -337,8 +341,10 @@ class InhibitionMemoryLayer(torch.nn.Module):
                 delta_mem = self.plasticity_rule(key_trace, val_trace, mem)
                 mem = mem + delta_mem
 
+                # mem_stack.append(mem)
+
                 # if t == 220:
-                #     noise = torch.rand_like(mem) * 0.5
+                #     noise = torch.rand_like(mem) * 0.6
                 #     mem = mem + noise
                 #     mem = torch.clamp(mem, 0, 1)
 
@@ -350,6 +356,20 @@ class InhibitionMemoryLayer(torch.nn.Module):
 
                 key_output_sequence.append(key)
                 val_output_sequence.append(val)
+
+            # mem_stack = torch.stack(mem_stack, dim=0)
+            # mem_stack = mem_stack.squeeze(1).detach().numpy()
+            # fig, ax = plt.subplots()
+            # # Function to update the plot in each animation frame
+            # def update(frame):
+            #     ax.clear()
+            #     ax.imshow(mem_stack[frame])
+            #     ax.set_title(f"Time Step {frame}")
+            # # Create an animation
+            # animation = FuncAnimation(fig, update, frames=len(mem_stack), interval=100)
+            # # Save the animation as a GIF
+            # animation.save('/home/jww/projects/AssociativeMemoryModel/results/weights.gif', writer='pillow', fps=10)
+
             # excitatory_mem = torch.stack(excitatory_mem, dim=1)
             # inhibitory_mem = torch.stack(inhibitory_mem, dim=1)
             # excitatory_mem_avg = torch.sum(excitatory_mem, dim=2) / 100.0
@@ -358,6 +378,9 @@ class InhibitionMemoryLayer(torch.nn.Module):
             # inhibitory_mem_array = inhibitory_mem.detach().to('cpu').numpy()
             # excitatory_mem_avg_array = excitatory_mem_avg.detach().to('cpu').numpy()
             # inhibitory_mem_avg_array = inhibitory_mem_avg.detach().to('cpu').numpy()
+            #
+            # combined_data = np.column_stack((excitatory_mem_avg_array[0], inhibitory_mem_avg_array[0]))
+            # np.savetxt('/home/jww/projects/AssociativeMemoryModel/combined_output.csv', combined_data, delimiter=',', fmt='%.6f')
             #
             # # 创建时间步数组（横坐标）
             # time_steps = range(1, 501)
