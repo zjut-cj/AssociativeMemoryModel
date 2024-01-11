@@ -86,7 +86,7 @@ def main():
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = RepeatMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+    test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
                             dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
@@ -163,7 +163,7 @@ def main():
     labels = labels.clone().to('cpu').detach().numpy()
     original_query_image = image_query.clone()
     # image_query = salt_pepper_noise(image_query, 1.0)
-    image_query = gaussian_perturb_image(image_query, 0.3)
+    # image_query = gaussian_perturb_image(image_query, 0.3)
     # image_query = apply_mask(image_query, 0.2)
 
     # Get dataset example and run the model
@@ -315,18 +315,19 @@ def main():
     # plt.tight_layout()
 
     # output query and reconstruction
-    query_image = image_sequence[0][targets[0]]
+    # query_image = image_sequence[0][targets[0]]
+    query_image = image_query_array[0]
     original_query = original_query_image[0].numpy()
-    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(5, 15))
-    ax[1].imshow(np.transpose(original_query, (1, 2, 0)),
-                    aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(5, 10))
+    # ax[1].imshow(np.transpose(original_query, (1, 2, 0)),
+    #                 aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
     ax[0].imshow(np.transpose(query_image, (1, 2, 0)),
                     aspect='equal', cmap='gray', vmin=0, vmax=1)
-    ax[2].imshow(np.transpose(outputs, (1, 2, 0)),
+    ax[1].imshow(np.transpose(outputs, (1, 2, 0)),
                     aspect='equal', cmap='gray', vmin=np.min(outputs), vmax=np.max(outputs))
     ax[0].set_axis_off()
     ax[1].set_axis_off()
-    ax[2].set_axis_off()
+    # ax[2].set_axis_off()
     fig.subplots_adjust(hspace=0)
     plt.tight_layout()
 

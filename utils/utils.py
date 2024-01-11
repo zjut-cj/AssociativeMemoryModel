@@ -48,6 +48,25 @@ def compute_average_ssim(images, targets):
     return average_ssim
 
 
+def compute_accuracy_ssim(outputs, targets, threshold=0.8):
+    if torch.cuda.is_available():
+        outputs = outputs.cuda()
+        targets = targets.cuda()
+
+    image_size = outputs.size(0)
+    correct_count = 0
+
+    for i in range(image_size):
+        ssim_value = pytorch_ssim.ssim(outputs[i], targets[i])
+        if ssim_value >= threshold:
+            correct_count += 1
+
+    accuracy = correct_count / image_size
+
+    return accuracy
+
+
+
 def compute_average_psnr(images, targets):
     # 转换PyTorch张量为NumPy数组
     images = images.cpu().detach().numpy()

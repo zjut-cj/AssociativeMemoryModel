@@ -14,7 +14,7 @@ import torch.backends.cudnn as cudnn
 import torchvision
 
 import utils.checkpoint
-from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, HeteroAssociativeMNISTDataset
+from data.mnist_datasets import MNISTDataset, SequentialMNISTDataset, RedundantMNISTDataset
 from functions.autograd_functions import SpikeFunction
 from functions.plasticity_functions import InvertedOjaWithSoftUpperBound
 from models.network_models import BackUp, InhibitoryMemoryModel
@@ -85,15 +85,15 @@ def main():
         torch.manual_seed(args.seed)
         cudnn.deterministic = True
 
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Data loading code
     image_transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
     ])
 
-    test_set = MNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
-                                      dataset_size=args.dataset_size, image_transform=image_transform)
+    test_set = RedundantMNISTDataset(root='/usr/common/datasets/MNIST', train=False, classes=args.num_classes,
+                                     dataset_size=args.dataset_size, image_transform=image_transform)
 
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=0,
                                               pin_memory=1, prefetch_factor=2)
@@ -225,7 +225,7 @@ def main():
         outputs, encoding_outputs, writing_outputs, reading_outputs, decoder_outputs = model(image_sequence,
                                                                                              image_query)
 
-        mem = writing_outputs[0].detach().numpy()
+        mem = writing_outputs[0].to('cpu').detach().numpy()
 
         synaptic_connections_num = np.count_nonzero(mem)
         total_synaptic_connections = mem.size
@@ -235,12 +235,44 @@ def main():
         if synaptic_utilize < min_utilization:
             min_utilization = synaptic_utilize
             min_utilization_info = (image_sequence.clone(), image_query.clone(), mem.copy(), outputs.clone(), targets.clone())
-
         if synaptic_utilize > max_utilization:
+
             max_utilization = synaptic_utilize
             max_utilization_info = (image_sequence.clone(), image_query.clone(), mem.copy(), outputs.clone(), targets.clone())
 
         synaptic_utilization.update(synaptic_utilize, image_sequence.size(0))
+
+    max_utilization_image_sequence, _, _, _, _ = max_utilization_info
+
+    query_10 = []
+    output_10 = []
+
+    for i in range(args.num_classes):
+        query_i = max_utilization_image_sequence[0][i].unsqueeze(0)
+        output_i, _, _, _, _ = model(max_utilization_image_sequence, query_i)
+        output_i = output_i.view(-1, 1, 28, 28)
+        query_10.append(query_i)
+        output_10.append(output_i)
+
+    query_10 = torch.stack(query_10, dim=0).detach().numpy()
+    output_10 = torch.stack(output_10, dim=0).detach().numpy()
+
+    for i in range(args.num_classes):
+        query_image = query_10[i][0]
+        output = output_10[i][0]
+        fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(5, 10))
+        # ax[1].imshow(np.transpose(original_query, (1, 2, 0)),
+        #                 aspect='equal', cmap='gray', vmin=np.min(original_query), vmax=np.max(original_query))
+        ax[0].imshow(np.transpose(query_image, (1, 2, 0)),
+                     aspect='equal', cmap='gray', vmin=0, vmax=1)
+        ax[1].imshow(np.transpose(output, (1, 2, 0)),
+                     aspect='equal', cmap='gray', vmin=np.min(output), vmax=np.max(output))
+        ax[0].set_axis_off()
+        ax[1].set_axis_off()
+        # ax[2].set_axis_off()
+        fig.subplots_adjust(hspace=0)
+        plt.tight_layout()
+        plt.show()
 
     print("平均突触利用率：", synaptic_utilization.avg)
     print("最小突触利用率：", min_utilization)

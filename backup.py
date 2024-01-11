@@ -405,7 +405,7 @@ def main_worker(gpu, num_gpus_per_node, args):
             # Use the directory that is stored in checkpoint if we resume training
             writer = SummaryWriter(log_dir=log_dir)
         elif args.logging:
-            log_dir = os.path.join('results', 'paper_result', '7_images', 'logs', time_stamp +
+            log_dir = os.path.join('results', 'associative_task', 'noisy', '0_3', 'logs', time_stamp +
                                    f'_thr-{args.thr}-{suffix}_attention_mnist_memory')
             writer = SummaryWriter(log_dir=log_dir)
 
@@ -450,7 +450,7 @@ def main_worker(gpu, num_gpus_per_node, args):
                 'time_stamp': time_stamp,
                 'params': args
             }, is_best, filename=os.path.join(
-                'results', 'paper_result', '7_images',
+                'results', 'associative_task', 'noisy', '0_3',
                 time_stamp + '_' + f'_thr-{args.thr}-{suffix}_with_encoding' + f'_times-{args.num_time_steps}'))
 
 
@@ -476,7 +476,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # mfcc_sequence, image_sequence, mfcc_query, image_target, targets = sample
         image_sequence, labels, image_query, answer = sample
         image_target = image_query
-        # image_query = gaussian_perturb_image(image_query, 0.3)
+        image_query = gaussian_perturb_image(image_query, 0.3)
         # image_query = apply_mask(image_query, 0.2)
 
         if args.gpu is not None:
@@ -493,8 +493,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # total_synaptic_connections = mem.size
         # synaptic_utilization = synaptic_connections_num / total_synaptic_connections
 
-        # output_array = output.clone().detach().to('cpu').numpy()
-        # image_target_array = image_target.clone().detach().to('cpu').numpy()
+        output_array = output.clone().detach().to('cpu').numpy()
+        image_target_array = image_target.clone().detach().to('cpu').numpy()
 
         ssim = compute_average_ssim(output, image_target)
         loss = criterion(output, image_target)
@@ -571,7 +571,7 @@ def validate(data_loader, model, criterion, args, prefix="Val: "):
             # mfcc_sequence, image_sequence, mfcc_query, image_target, targets = sample
             image_sequence, labels, image_query, answer = sample
             image_target = image_query
-            # image_query = gaussian_perturb_image(image_query, 0.3)
+            image_query = gaussian_perturb_image(image_query, 0.3)
             # image_query = apply_mask(image_query, 0.2)
 
             if args.gpu is not None:
